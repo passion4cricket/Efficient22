@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>SkAgent</title>
+    <style>
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            height: 100vh;
+            background: #f9fafb;
+        }
+
+        /* Chat panel - now full width */
+        .chat {
+            width: 100%;
+            height: calc(100vh - 3.5vw);
+            display: flex;
+            flex-direction: column;
+            background: #f3f4f6;
+            position: relative;
+        }
+
+        .chat-messages {
+            flex: 1;
+            padding: 16px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin-bottom: 80px;
+        }
+
+        .msg {
+            padding: 10px 14px;
+            border-radius: 12px;
+            max-width: 70%;
+            animation: fadeIn 0.3s ease;
+        }
+
+        .msg.user {
+            align-self: flex-end;
+            background: #2563eb;
+            color: white;
+        }
+
+        .msg.agent {
+            align-self: flex-start;
+            background: #e5e7eb;
+            color: black;
+        }
+
+        /* Options */
+        .options {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-top: 10px;
+        }
+
+        .option-btn {
+            padding: 10px;
+            background: #2563eb;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            text-align: left;
+            transition: background 0.2s;
+        }
+
+        .option-btn:hover {
+            background: #1e40af;
+        }
+
+        /* Loader */
+        .loading {
+            display: flex;
+            gap: 6px;
+            align-self: flex-start;
+            margin-left: 6px;
+        }
+
+        .dot {
+            width: 10px;
+            height: 10px;
+            background: #2563eb;
+            border-radius: 50%;
+            animation: bounce 0.6s infinite alternate;
+        }
+
+        .dot:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+
+        .dot:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+
+        @keyframes bounce {
+            from {
+                transform: translateY(0);
+                opacity: 0.6;
+            }
+
+            to {
+                transform: translateY(-6px);
+                opacity: 1;
+            }
+        }
+
+        /* Input box full width at bottom */
+        .chat-input {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            display: flex;
+            gap: 10px;
+            padding: 12px;
+            background: #fff;
+            border-top: 1px solid #e5e7eb;
+            height: 80px;
+            box-sizing: border-box;
+            align-items: center;
+        }
+
+        /* Custom file input styling */
+        .file-input-wrapper {
+            position: relative;
+            flex: 1;
+            display: flex;
+            align-items: center;
+        }
+
+        .chat-input input[type="file"] {
+            position: absolute;
+            opacity: 0;
+            width: 100%;
+            height: 100%;
+            cursor: pointer;
+        }
+
+        .file-input-label {
+            flex: 1;
+            padding: 12px 16px;
+            border-radius: 8px;
+            border: 2px dashed #d1d5db;
+            background: #f9fafb;
+            color: #6b7280;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+        }
+
+        .file-input-label:hover {
+            border-color: #2563eb;
+            background: #eff6ff;
+            color: #2563eb;
+        }
+
+        .file-input-label.has-file {
+            border-color: #2563eb;
+            background: #eff6ff;
+            color: #1e40af;
+            border-style: solid;
+        }
+
+        .upload-icon {
+            width: 20px;
+            height: 20px;
+        }
+
+        .chat-input button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            background: #2563eb;
+            color: white;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 14px;
+            transition: background 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            min-width: 120px;
+            justify-content: center;
+        }
+
+        .chat-input button:hover {
+            background: #1e40af;
+        }
+
+        .chat-input button:active {
+            transform: scale(0.98);
+        }
+
+        .chat-input button:disabled {
+            background: #9ca3af;
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .header_container {
+            width: 100%;
+            background-color: #2563eb;
+            height: 3.5vw;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .header_text {
+            color: white;
+            align-content: center;
+            font-size: 1.2vw;
+            font-weight: bold;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="header_container">
+        <span class="header_text">SkAgent</span>
+    </div>
+    
+    <!-- Full width chat -->
+    <div class="chat">
+        <div class="chat-messages" id="chatMessages">
+        </div>
+
+        <!-- Updated input with professional styling -->
+        <div class="chat-input">
+            <div class="file-input-wrapper">
+                <input type="file" id="platformInput" 
+                       accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                       onchange="handleFileSelect()" />
+                <label for="platformInput" class="file-input-label" id="fileLabel">
+                    <svg class="upload-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                              d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                    </svg>
+                    <span id="fileName">Choose CSV file</span>
+                </label>
+            </div>
+            <button onclick="submitPlatform()" id="uploadButton" disabled>
+                <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                          d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                </svg>
+                Upload & Send
+            </button>
+        </div>
+    </div>
+
+    <script>
+        const chatMessages = document.getElementById("chatMessages");
+
+        // Initial greeting message
+        let time = new Date();
+        let greeting = "Good " + (time.getHours() < 12 ? "morning" : time.getHours() < 18 ? "afternoon" : "evening");
+
+        addMessage(`${greeting}. How can I help you?`, "agent");
+
+        function handleFileSelect() {
+            const input = document.getElementById("platformInput");
+            const fileLabel = document.getElementById("fileLabel");
+            const fileName = document.getElementById("fileName");
+            const uploadButton = document.getElementById("uploadButton");
+
+            if (input.files.length > 0) {
+                const file = input.files[0];
+                fileName.textContent = file.name;
+                fileLabel.classList.add("has-file");
+                uploadButton.disabled = false;
+            } else {
+                fileName.textContent = "Choose CSV file";
+                fileLabel.classList.remove("has-file");
+                uploadButton.disabled = true;
+            }
+        }
+
+        function addMessage(text, type = "agent") {
+            const msg = document.createElement("div");
+            msg.className = "msg " + type;
+            msg.textContent = text;
+            chatMessages.appendChild(msg);
+            msg.scrollIntoView({ behavior: "smooth", block: "end" });
+        }
+
+        function addLoader() {
+            const loader = document.createElement("div");
+            loader.className = "loading";
+            loader.innerHTML = '<div class="dot"></div><div class="dot"></div><div class="dot"></div>';
+            chatMessages.appendChild(loader);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+            return loader;
+        }
+
+        let socket = null;
+        let clientId = null;
+
+        function openSocket() {
+            if (socket && socket.readyState === 1) return;
+            socket = new WebSocket("ws://127.0.0.1:8000/ws/discovery");
+
+            socket.onopen = () => {
+                console.log("WebSocket connection established");
+            };
+
+            socket.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                console.log("Server:", data);
+
+                if (data.validation === 1) {
+                    addMessage(data.message, "agent");
+                }
+
+                if (data.client_id) {
+                    clientId = data.client_id;
+                    console.log("Assigned client_id:", clientId);
+                }
+
+                if (data.agent) {
+                    addMessage(data.agent, "agent");
+                }
+            };
+
+            socket.onclose = () => {
+                console.log("WebSocket closed");
+            };
+        }
+
+        function sendUserInput(inputText) {
+            if (!socket || socket.readyState !== 1) {
+                let queuedInput = inputText;
+                openSocket();
+                socket.onopen = () => {
+                    socket.send(JSON.stringify({ user_input: queuedInput }));
+                };
+            } else {
+                socket.send(JSON.stringify({ user_input: inputText }));
+            }
+        }
+
+        async function submitPlatform() {
+            event.preventDefault();
+            const input = document.getElementById("platformInput");
+            const uploadButton = document.getElementById("uploadButton");
+            const selectedFiles = input.files;
+
+            if (selectedFiles.length > 0) {
+                const firstFile = selectedFiles[0];
+                console.log('File Name:', firstFile.name);
+                console.log('File Size:', firstFile.size);
+                console.log('File Type:', firstFile.type);
+                
+                if (firstFile.type !== "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" &&
+                    firstFile.type !== "text/csv") {
+                    alert("Please upload a valid CSV file.");
+                    return;
+                }
+
+                // Disable button during upload
+                uploadButton.disabled = true;
+                uploadButton.textContent = "Uploading...";
+
+                const formData = new FormData();
+                formData.append("file", selectedFiles[0]);
+
+                try {
+                    const response = await fetch("http://localhost:8000/upload", {
+                        method: "POST",
+                        body: formData,
+                    });
+
+                    const result = await response.json();
+                    console.log("Server Response:", result);
+                    
+                    addMessage(`File "${firstFile.name}" uploaded successfully!`, "user");
+                    
+                    // Reset input
+                    input.value = "";
+                    handleFileSelect();
+                } catch (error) {
+                    console.error("Upload error:", error);
+                    alert("Upload failed. Please try again.");
+                    uploadButton.disabled = false;
+                    uploadButton.innerHTML = `<svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                              d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                    </svg> Upload & Send`;
+                }
+            }
+        }
+    </script>
+</body>
+
+</html>

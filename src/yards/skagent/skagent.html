@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>SkAgent</title>
+    <style>
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            /* display: flex; */
+            height: 100vh;
+            background: #f9fafb;
+        }
+
+        /* Chat panel */
+        .chat {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            border-right: 1px solid #e5e7eb;
+            background: #f3f4f6;
+            position: relative;
+            min-height: 0;
+            /* Fix flexbox scrolling */
+        }
+
+        .chat-messages {
+            flex: 1;
+            padding: 16px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            /* Prevent last message from being hidden by input box */
+            margin-bottom: 60px;
+        }
+
+        .msg {
+            padding: 10px 14px;
+            border-radius: 12px;
+            max-width: 70%;
+            animation: fadeIn 0.3s ease;
+        }
+
+        .msg.user {
+            align-self: flex-end;
+            background: #2563eb;
+            color: white;
+        }
+
+        .msg.agent {
+            align-self: flex-start;
+            background: #e5e7eb;
+            color: black;
+        }
+
+        /* Options */
+        .options {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-top: 10px;
+        }
+
+        .option-btn {
+            padding: 10px;
+            background: #2563eb;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            text-align: left;
+            transition: background 0.2s;
+        }
+
+        .option-btn:hover {
+            background: #1e40af;
+        }
+
+        /* Loader */
+        .loading {
+            display: flex;
+            gap: 6px;
+            align-self: flex-start;
+            margin-left: 6px;
+        }
+
+        .dot {
+            width: 10px;
+            height: 10px;
+            background: #2563eb;
+            border-radius: 50%;
+            animation: bounce 0.6s infinite alternate;
+        }
+
+        .dot:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+
+        .dot:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+
+        @keyframes bounce {
+            from {
+                transform: translateY(0);
+                opacity: 0.6;
+            }
+
+            to {
+                transform: translateY(-6px);
+                opacity: 1;
+            }
+        }
+
+        /* Input box full width at bottom */
+        .chat-input {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            display: flex;
+            gap: 8px;
+            padding: 10px;
+            background: #fff;
+            border-top: 1px solid #e5e7eb;
+            height: 60px;
+            box-sizing: border-box;
+        }
+
+        .chat-input input {
+            flex: 1;
+            padding: 12px;
+            border-radius: 8px;
+            border: 1px solid #d1d5db;
+        }
+
+        .chat-input button {
+            padding: 12px 16px;
+            border: none;
+            border-radius: 8px;
+            background: #2563eb;
+            color: white;
+            cursor: pointer;
+        }
+
+        /* Right panel (process) */
+        .process {
+            flex: 1;
+            background: #ffffff;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+        }
+
+        .process h2 {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .step {
+            padding: 14px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            border: 1px solid #d1d5db;
+            background: #f9fafb;
+            opacity: 0;
+            animation: fadeIn 0.6s forwards;
+        }
+
+        .step.success {
+            background: #dcfce7;
+            border-color: #22c55e;
+            font-weight: bold;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* 🔹 Status panel pinned to bottom of right panel only */
+        .status-panel {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            display: flex;
+            background: white;
+            color: #111827;
+            padding: 20px 20px;
+            border-top: 1px solid #e5e7eb;
+            font-size: 0.9rem;
+            justify-content: space-around;
+        }
+
+        .status-item {
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            font-weight: 600;
+        }
+
+        .status-item span {
+            font-size: 1.2rem;
+            font-weight: bold;
+            color: #2563eb;
+        }
+
+        /* Scrollable steps above status */
+        #processSteps {
+            flex: 1;
+            overflow-y: auto;
+            /* margin-bottom: 120px; */
+            margin-bottom: 50px;
+            /* reserve space for status-panel */
+        }
+
+        .header_container {
+            width: 100%;
+            background-color: blue;
+            height: 3.5vw;
+            display: flex;
+        }
+
+        /* .header_div {
+            width: 80%;
+            box-shadow: 0 4px 8px 0 rgba(0, 0, 0, 0.2), 0 6px 20px 0 rgba(0, 0, 0, 0.19);
+            background-color: white;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        } */
+
+        .header_text {
+            color: white;
+            align-content: center;
+            font-size: 1.2vw;
+            margin-left: 1vw;
+            font-weight: bold;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="header_container">
+        <span class="header_text">SkAgent</span>
+    </div>
+    <div style="display: flex; height: calc(100vh - 3.5vw);">
+        <!-- Left: Chat -->
+        <div class="chat">
+            <div class="chat-messages" id="chatMessages">
+            </div>
+
+            <!-- 🔹 Full width input -->
+            <div class="chat-input">
+                <input autofocus type="file" id="platformInput" placeholder="Type your platform..."
+                    onkeypress="if(event.key==='Enter'){ submitPlatform(); }" accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel" />
+                <button onclick="submitPlatform()">➤</button>
+            </div>
+        </div>
+
+        <!-- Right: Process -->
+        <div class="process">
+            <h2>Agent workbench</h2>
+            <div id="processSteps"></div>
+
+            <!-- 🔹 Status panel inside right panel -->
+            <div class="status-panel" id="statusPanel">
+                <div class="status-item">
+                    Total &nbsp;
+                    <span id="totalMappings">0</span>
+                </div>
+                <div class="status-item">
+                    Processed &nbsp;
+                    <span id="processedMappings">0</span>
+                </div>
+                <div class="status-item">
+                    Current &nbsp;
+                    <span id="currentMapping">-</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const chatMessages = document.getElementById("chatMessages");
+        const processContainer = document.getElementById("processSteps");
+
+        const totalMappingsEl = document.getElementById("totalMappings");
+        const processedMappingsEl = document.getElementById("processedMappings");
+        const currentMappingEl = document.getElementById("currentMapping");
+
+        let totalMappings = 0;
+        let processedMappings = 0;
+
+        // Initial greeting message
+        let time = new Date();
+        let greeting = "Good " + (time.getHours() < 12 ? "morning" : time.getHours() < 18 ? "afternoon" : "evening");
+
+        addMessage(`${greeting}. How can I help you?`, "agent");
+
+        function updateStatus() {
+            processedMappingsEl.textContent = processedMappings;
+        }
+
+        function addMessage(text, type = "agent") {
+            const msg = document.createElement("div");
+            msg.className = "msg " + type;
+            msg.textContent = text;
+            chatMessages.appendChild(msg);
+            msg.scrollIntoView({ behavior: "smooth", block: "end" });
+        }
+
+        function addLoader() {
+            const loader = document.createElement("div");
+            loader.className = "loading";
+            loader.innerHTML = '<div class="dot"></div><div class="dot"></div><div class="dot"></div>';
+            chatMessages.appendChild(loader);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+            return loader;
+        }
+
+        async function addStep(text, isLast = false, mappingName = '', subMessage = null) {
+            const stepDiv = document.createElement("div");
+            stepDiv.className = "step" + (isLast ? " success" : "");
+            stepDiv.textContent = text;
+
+            if (mappingName) {
+                stepDiv.style.background = "#fef9c3";
+                stepDiv.style.borderColor = "#facc15";
+                stepDiv.style.fontWeight = "bold";
+                stepDiv.title = `Mapping: ${mappingName}`;
+            }
+            if (subMessage && Array.isArray(subMessage)) {
+                stepDiv.style.fontWeight = "bold";
+            }
+
+            processContainer.appendChild(stepDiv);
+            processContainer.scrollTop = processContainer.scrollHeight;
+
+            // If subMessage is an array, display each item one by one
+            if (subMessage && Array.isArray(subMessage)) {
+                const ul = document.createElement("ul");
+                ul.style.marginBottom = "5px";
+                ul.style.paddingLeft = "20px";
+                stepDiv.appendChild(ul);
+
+                for (const msg of subMessage) {
+                    const li = document.createElement("li");                    
+                    li.style.padding = "5px";
+                    li.textContent = msg;
+                    li.style.fontWeight = "normal";
+                    ul.appendChild(li);
+                    processContainer.scrollTop = processContainer.scrollHeight;
+
+                    // Wait 500ms before adding next item
+                    await new Promise(resolve => setTimeout(resolve, 700));
+                }
+            }
+        }
+
+
+
+        async function processMapping(data) {
+            if ('mapping_name' in data) {
+                addStep(data.message, false, data.mapping_name);
+            } else if ('import' in data) {
+                addStep(data.message, true, '');
+                if (totalMappings > processedMappings) {
+                    processedMappings++;
+                }
+            } else if ('count' in data) {
+                totalMappings = data.count;
+                totalMappingsEl.textContent = totalMappings;
+            } else {
+                addStep(data.message, false, '', data.sub_message ?? '');
+            }
+
+            if (totalMappings > processedMappings) {
+                currentMappingEl.textContent = processedMappings + 1;
+            } else {
+                currentMappingEl.textContent = '-';
+            }
+            updateStatus();
+        }
+
+        let socket = null;
+        let clientId = null;
+
+        function openSocket() {
+            if (socket && socket.readyState === 1) return;
+            socket = new WebSocket("ws://127.0.0.1:8000/ws/discovery");
+
+            socket.onopen = () => {
+                console.log("WebSocket connection established");
+            };
+
+            socket.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                console.log("Server:", data);
+
+                if (data.validation === 1) {
+                    addMessage(data.message, "agent");
+                }
+
+                if (data.client_id) {
+                    clientId = data.client_id;
+                    console.log("Assigned client_id:", clientId);
+                }
+
+                if (data.agent) {
+                    addMessage(data.agent, "agent");
+                }
+
+                if (data.ready_for_migration) {
+                    console.log("✅ Discovery complete. Ask user to proceed.");
+                    processMapping(data)
+                }
+            };
+
+            socket.onclose = () => {
+                console.log("WebSocket closed");
+            };
+        }
+
+        function sendUserInput(inputText) {
+            if (!socket || socket.readyState !== 1) {
+                let queuedInput = inputText;
+                openSocket();
+                socket.onopen = () => {
+                    socket.send(JSON.stringify({ user_input: queuedInput }));
+                };
+            } else {
+                socket.send(JSON.stringify({ user_input: inputText }));
+            }
+        }
+
+
+        async function submitPlatform() {
+            event.preventDefault();
+            const input = document.getElementById("platformInput");
+            const selectedFiles = input.files; // This is a FileList object
+
+            if (selectedFiles.length > 0) {
+                const firstFile = selectedFiles[0];
+                console.log('File Name:', firstFile.name);
+                console.log('File Size:', firstFile.size);
+                console.log('File Type:', firstFile.type);
+                if (firstFile.type !== "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" &&
+                    firstFile.type !== "application/vnd.ms-excel" &&
+                    firstFile.type !== "text/csv") {
+                    alert("Please upload a valid Excel or CSV file.");
+                    return;
+                }
+            }
+
+            const formData = new FormData();
+            formData.append("file", selectedFiles[0]);
+
+            const response = await fetch("http://localhost:8000/upload", {
+                method: "POST",
+                body: formData,
+            });
+
+            const result = await response.json();
+            console.log("Server Response:", result);
+
+            // const value = input.value.trim();
+            // if (value) {
+            //     addMessage(value, "user");
+            //     sendUserInput(value);
+            //     input.value = "";
+            //     let socket = null;
+            // }
+        }
+    </script>
+</body>
+
+</html>
