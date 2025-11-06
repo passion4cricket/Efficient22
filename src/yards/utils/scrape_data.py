@@ -13,7 +13,12 @@ from rapidfuzz import process, fuzz
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from yards.utils.utils import llm_init, call_llm
-from yards.utils.config import SERPER_API_KEY, PROMPT_TEMPLATES
+from yards.utils.config import PROMPT_TEMPLATES
+from dotenv import load_dotenv
+
+load_dotenv()
+SERPER_API_KEY = os.getenv("SERPER_API_KEY")
+
 
 llm, prompt = llm_init()
 

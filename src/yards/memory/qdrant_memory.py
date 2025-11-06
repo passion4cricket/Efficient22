@@ -9,11 +9,16 @@ from qdrant_client.models import (
     PayloadSchemaType
 )
 from sentence_transformers import SentenceTransformer
-import uuid, re
+import uuid, re, os
 import time
-from yards.utils.config import QDRANT_HOST, QDRANT_API_KEY, CHATGROQ_API_KEY
+# from yards.utils.config import QDRANT_HOST, QDRANT_API_KEY, GROQ_API_KEY
 from groq import Groq
+from dotenv import load_dotenv
 
+load_dotenv()
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+QDRANT_HOST = os.getenv("QDRANT_HOST")
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 
 # ----------------------------
 # Paraphrase dictionary

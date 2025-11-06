@@ -2,7 +2,12 @@ from pathlib import Path
 import os, sys, json, re
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_groq import ChatGroq
-from yards.utils.config import CHATGROQ_API_KEY
+# from yards.utils.config import GROQ_API_KEY
+from dotenv import load_dotenv
+
+load_dotenv()
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
 
 
 def get_base_dir():
@@ -18,7 +23,7 @@ def get_base_dir():
 def llm_init():
     # Initialize Groq LLM
     llm = ChatGroq(
-        groq_api_key=CHATGROQ_API_KEY,
+        groq_api_key=GROQ_API_KEY,
         model_name="llama-3.1-8b-instant",
         temperature=0,
     )
