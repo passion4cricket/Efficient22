@@ -4,7 +4,6 @@ import requests
 import os
 import json
 import re
-import csv
 from playwright.async_api import async_playwright
 from bs4 import BeautifulSoup
 import extruct
@@ -12,24 +11,23 @@ from urllib.parse import urljoin
 from rapidfuzz import process, fuzz
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-from yards.utils.utils import llm_init, call_llm
-from yards.utils.config import PROMPT_TEMPLATES
+from yards.utils.utils import llm_init, call_llm, run_local_llm
 from dotenv import load_dotenv
+import tldextract
 
+# ----------------------------------------------------------
+# ENV + INIT
+# ----------------------------------------------------------
 load_dotenv()
 SERPER_API_KEY = os.getenv("SERPER_API_KEY")
-
-
 llm, prompt = llm_init()
 
-# ----------------------------------------------------------
-# CONFIG
-# ----------------------------------------------------------
+MAX_TOKENS_PER_REQUEST = 2500
+
 official_sites = {
     "SG": "https://shop.teamsg.in/",
     "Kookaburra": "https://www.kookaburrasport.com.au/",
     "Gray-Nicolls": "https://www.gray-nicolls.co.uk/",
-    "MRF": "https://www.mrfsports.com/",
     "SS": "https://www.sstoncricket.com/",
     "Adidas": "https://www.adidas.co.in/cricket",
     "New Balance": "https://www.newbalance.co.uk/cricket/",
@@ -47,56 +45,19 @@ official_sites = {
     "Protos": "https://protoscricket.com/",
     "Payntr": "https://www.payntr.com/",
     "Moonwalkr": "https://moonwalkr.com/"
-    # SS, MRF, CEAT, SG, MOON.
 }
+
 brands = list(official_sites.keys())
 
-SHOPIFY_HEADERS = [
-    "Title", "Body (HTML)", "Image Src", "Variant Price",
-    "Currency", "SEO Title", "SEO Description", "Source URL", "Variants"
-]
-
-UPDATED_DIR = "output"
-os.makedirs(UPDATED_DIR, exist_ok=True)
 
 # ----------------------------------------------------------
-# Utility
+# Utilities
 # ----------------------------------------------------------
 def get_base_url(html_content, page_url):
     base_href = re.search(r'<base\s+href=["\'](.*?)["\']', html_content, re.I)
-    if base_href:
-        return urljoin(page_url, base_href.group(1))
-    return page_url
+    return urljoin(page_url, base_href.group(1)) if base_href else page_url
 
-# ----------------------------------------------------------
-# Brand Detection
-# ----------------------------------------------------------
-async def detect_brand(product_name, brands):
-    best_match, score, _ = process.extractOne(product_name, brands, scorer=fuzz.partial_ratio)
-    if score >= 75:
-        return best_match
 
-    vectorizer = TfidfVectorizer().fit(brands + [product_name])
-    vectors = vectorizer.transform(brands + [product_name])
-    sims = cosine_similarity(vectors[-1], vectors[:-1]).flatten()
-    max_idx = sims.argmax()
-    if sims[max_idx] >= 0.7:
-        return brands[max_idx]
-
-    prompt_text = """
-    You are a product and brand expert.
-    Identify the brand for the following product:
-    Product: "{product_name}"
-    Possible brands: {brand_list}
-    Respond with ONLY the brand name from the list.
-    """
-    extractor_response = await call_llm(llm, prompt, prompt_text, {"product_name": product_name, "brand_list": ", ".join(brands)})
-    brand = extractor_response.content.strip()
-    return brand if brand in brands else None
-
-# ----------------------------------------------------------
-# Thread-safe Playwright
-# ----------------------------------------------------------
 async def fetch_page_in_thread(url: str, timeout_ms: int = 40000) -> str:
     loop = asyncio.get_running_loop()
     future: asyncio.Future = loop.create_future()
@@ -125,14 +86,47 @@ async def fetch_page_in_thread(url: str, timeout_ms: int = 40000) -> str:
     threading.Thread(target=_worker, daemon=True).start()
     return await future
 
+
 # ----------------------------------------------------------
-# Variant Extractor (from your first working code)
+# Variant Extractors
 # ----------------------------------------------------------
+async def extract_variants_generic(soup, data):
+    variants = []
+    for entry in data.get("json-ld", []):
+        if entry.get("@type") == "Product":
+            offers = entry.get("offers")
+            if isinstance(offers, list):
+                for offer in offers:
+                    variants.append({
+                        "Variant Name": entry.get("name"),
+                        "Variant SKU": offer.get("sku"),
+                        "Variant Price": offer.get("price"),
+                        "Currency": offer.get("priceCurrency"),
+                        "Size": offer.get("name") or offer.get("description"),
+                    })
+            elif isinstance(offers, dict):
+                variants.append({
+                    "Variant Name": entry.get("name"),
+                    "Variant SKU": offers.get("sku"),
+                    "Variant Price": offers.get("price"),
+                    "Currency": offers.get("priceCurrency"),
+                    "Size": offers.get("name") or offers.get("description"),
+                })
+
+    if not variants:
+        for select in soup.find_all("select"):
+            if re.search(r"size|variant|option|color", select.get("name", ""), re.I):
+                for opt in select.find_all("option"):
+                    value = opt.get_text(strip=True)
+                    if value:
+                        variants.append({"Variant Name": value})
+    return variants
+
+
 async def extract_variants_from_shopify(soup):
     variants = []
-
     script_tags = soup.find_all("script", string=re.compile(r"Shopify\.product|var meta"))
-    for s in script_tags: 
+    for s in script_tags:
         s = s.string
         match = re.search(r"var\s+meta\s*=\s*(\{.*?\});", s, re.S)
         if match:
@@ -140,81 +134,680 @@ async def extract_variants_from_shopify(soup):
                 shopify_json = json.loads(match.group(1))
                 product_data = shopify_json.get("product", {})
                 vendor = product_data.get("vendor")
-                for variant in product_data.get("variants", []):
+                for variant in product_data.get("variants", []):                    
                     variants.append({
                         "Variant Name": variant.get("name") or product_data.get("title"),
                         "Variant SKU": variant.get("sku"),
-                        "Variant Price": variant.get("price") / 100 if isinstance(variant.get("price"), (int, float)) else variant.get("price"),
-                        "Currency": "INR",
+                        "Variant Price": variant.get("price") / 100 if isinstance(variant.get("price"),
+                                                                                  (int, float)) else variant.get(
+                            "price"),
                         "Size": variant.get("public_title"),
-                        "Vendor": vendor
                     })
             except Exception as e:
-                print(f"[⚠️ Error parsing Shopify JSON] {e}")
+                print(f"[⚠️ Shopify JSON parse error] {e}")
     return variants
 
+
 # ----------------------------------------------------------
-# Product Info
+# Product Info Extractor
 # ----------------------------------------------------------
 async def extract_product_info(url):
-    html = await fetch_page_in_thread(url)
-    if not html:
-        return {}
+    try:
+        html = await fetch_page_in_thread(url)
+        if not html:
+            return {}
 
-    base_url = get_base_url(html, url)
-    data = extruct.extract(html, base_url=base_url, syntaxes=["json-ld", "microdata"])
-    soup = BeautifulSoup(html, "html.parser")
+        base_url = get_base_url(html, url)
 
-    product = {}
-    product["Source URL"] = url
+        # print(f"base_url {base_url}")
 
-    for entry in data.get("json-ld", []):
-        if entry.get("@type") == "Product":
-            product["Title"] = entry.get("name")
-            product["Body (HTML)"] = entry.get("description")
-            product["Image Src"] = entry.get("image")
-            offers = entry.get("offers", {})
-            if isinstance(offers, dict):
-                product["Variant Price"] = offers.get("price")
-                product["Currency"] = offers.get("priceCurrency")
-            break
+        data = extruct.extract(html, base_url=base_url, syntaxes=["json-ld", "microdata"])
+        soup = BeautifulSoup(html, "html.parser")
 
-    meta_title = soup.find("meta", property="og:title")
-    meta_desc = soup.find("meta", attrs={"name": "description"})
-    product["SEO Title"] = meta_title["content"] if meta_title else product.get("Title")
-    product["SEO Description"] = meta_desc["content"] if meta_desc else product.get("Body (HTML)")
+        # data = data['json-ld']
 
-    # ✅ Shopify variant extraction
-    variants = await extract_variants_from_shopify(soup)
-    if variants:
-        product["Variants"] = variants
-    else:
-        product["Variants"] = []
+        meta_title = soup.find("meta", property="og:title")
+        meta_desc = soup.find("meta", attrs={"name": "description"})
+        data["SEO Title"] = meta_title["content"] if meta_title else None
+        data["SEO Description"] = meta_desc["content"] if meta_desc else None
 
-    return product
+        variants = await extract_variants_from_shopify(soup)
+        if not variants:
+            variants = await extract_variants_generic(soup, data)
+        data["Variants"] = variants or []
 
-# ----------------------------------------------------------
-# Main: Search + Extract multiple sites
-# ----------------------------------------------------------
+        return data
+    except Exception as e:
+        print("Extract product info")
+        return data
+
+def detect_region(url, snippet_text=""):
+    url_lower = url.lower()
+    snippet_text = snippet_text.lower()
+
+    # ---------------------------
+    # 1. Known retailer / brand rules
+    # ---------------------------
+    retailer_rules = {
+        "amazon.in": "India",
+        "amazon.com": "United States",
+        "flipkart.com": "India",
+        "croma.com": "India",
+        "reliance": "India",
+        "walmart.com": "United States",
+        "bestbuy.com": "United States",
+        "target.com": "United States",
+        "argos.co.uk": "United Kingdom",
+        "currys.co.uk": "United Kingdom",
+        "amazon.co.uk": "United Kingdom",
+        "amazon.ca": "Canada",
+        "amazon.de": "Germany",
+        "amazon.fr": "France"
+    }
+    for key, region in retailer_rules.items():
+        if key in url_lower:
+            return region
+
+    # ---------------------------
+    # 2. URL path region indicators
+    # ---------------------------
+    path_region_patterns = {
+        "/in/": "India",
+        "/hi-in/": "India",
+        "/en-in/": "India",
+        "/en-us/": "United States",
+        "/en-gb/": "United Kingdom",
+        "/uk/": "United Kingdom",
+        "/ca/": "Canada",
+        "/de/": "Germany",
+        "/fr/": "France"
+    }
+    for key, region in path_region_patterns.items():
+        if key in url_lower:
+            return region
+
+    # ---------------------------
+    # 3. Currency detection
+    # ---------------------------
+    if "₹" in snippet_text:
+        return "India"
+    if "$" in snippet_text or "usd" in snippet_text.lower() or "us" in snippet_text.lower():
+        # if url_lower.endswith(".com") or ".com/" in url_lower:
+        return "United States"
+    if "£" in snippet_text:
+        return "United Kingdom"
+    if "€" in snippet_text:
+        return "Europe"
+
+    # ---------------------------
+    # 4. Phone number country codes
+    # ---------------------------
+    phone_patterns = {
+        r"\+91": "India",
+        r"\+1(?!\d{1,2})": "United States",
+        r"\+44": "United Kingdom",
+        r"\+61": "Australia"
+    }
+    for pattern, region in phone_patterns.items():
+        if re.search(pattern, snippet_text):
+            return region
+
+    # ---------------------------
+    # 5. TLD fallback
+    # ---------------------------
+    extracted = tldextract.extract(url)
+    tld = extracted.suffix  # e.g., "com", "in", "co.uk"
+
+    tld_mapping = {
+        "in": "India",
+        "co.in": "India",
+        "co.uk": "United Kingdom",
+        "uk": "United Kingdom",
+        "ca": "Canada",
+        "com.au": "Australia",
+        "sg": "Singapore",
+        "ae": "United Arab Emirates",
+        "de": "Germany",
+        "fr": "France",
+    }
+
+    if tld in tld_mapping:
+        return tld_mapping[tld]
+
+    # ---------------------------
+    # Default
+    # ---------------------------
+    return "Unknown / Global"
+
+
 async def get_multi_source_product_pages(product_names):
     final_results = []
     for name in product_names:
-        print(f"🔍 Fetching data for: {name}")
-        brand = await detect_brand(name, brands)
-        domain = official_sites.get(brand)
-        query = f"{name} site:{domain}" if domain else name
+        query = f"{name}"
+        print(f"🔍 Searching for product: {query}")
 
         url = "https://google.serper.dev/search"
         headers = {"X-API-KEY": SERPER_API_KEY, "Content-Type": "application/json"}
-        payload = {"q": query, "num": 3}
+        payload = {"q": query, "num": 5}
+        # payload = {"q": query, "num": 5, "gl": "us", "hl": "en"}
+
         try:
             res = requests.post(url, headers=headers, json=payload)
             data = res.json()
-            results = data.get("organic", [])
-            if results:
-                link = results[0].get("link")
-                prod = await extract_product_info(link)
-                final_results.append(prod)
+            # print(data)
+            
+            results = data.get("organic", [])            
+
+            if not results:
+                print(f"⚠️ No results found for {name}")
+                continue
+
+            product_data = []
+            for result in results:
+                link = result.get("link")
+                if not link:
+                    continue
+                try:
+                    region = detect_region(link, result.get("snippet", ""))
+                    if region == "Unknown / Global" or region == "United States":
+                        link = f"{link}/?currency=usd"
+                    
+                    print(f"base URL {link} and detected region: {region}")
+                    
+                    prod = await extract_product_info(link)
+                    normalize = await normalize_info(prod)
+
+                    if isinstance(normalize, dict):                
+                        product_data.append(normalize)
+                    else:                
+                        if prod:
+                            product_data.append(prod)
+                except Exception as e:
+                    print(f"[❌ Failed to extract from {link}] {e}")
+
+            if product_data:
+                merged = await summarize_product_info(name, product_data)
+                
+                print(f"✅ Final summarized product for {name} ready.")                
+                final_results.append(merged)
+
         except Exception as e:
             print(f"[❌ Error fetching {name}] {e}")
+    
     return final_results
+
+async def summarize_product_info(product_name, product_values, region_info="us"):
+    prod_description = []
+    prod_variant = []
+    prod_images = []
+    prod_brand = []
+
+    print(product_values)
+
+    # Flatten incoming product data
+    for p in product_values:
+        if p.get("description"):
+            prod_description.append(p["description"])
+
+        if p.get("variants"):
+            prod_variant.extend(p["variants"])
+
+        if p.get("images"):
+            prod_images.extend(p["images"])
+
+        if p.get("brand"):
+            prod_brand.append(p["brand"])
+
+    summary_prompt = """
+        You are an e-commerce catalog normalization engine.
+
+        Your task:
+        Given the input data, generate ONLY a single clean JSON object.
+        Do NOT output anything except pure JSON.
+        No explanations, no headings, no markdown, no comments.
+
+        JSON FORMAT (MANDATORY):
+        {
+            "title": "",
+            "brand": "",
+            "official_sku": "",
+            "description": "",
+            "variants": [],
+            "images": []
+        }
+
+        RULES:
+
+        1. Use only the provided input. Do not invent any data.
+
+        2. Title
+        - Set "title" = product_name.
+
+        3. Brand
+        - Extract only if clearly present in the product name.
+        - Otherwise brand = "".
+
+        4. Description
+        - Merge all descriptions.
+        - Remove duplicates.
+        - Keep only factual product information.
+
+        5. Images
+        - Include only valid http/https URLs.
+        - Remove duplicates.
+
+        6. Variant Structure
+        Each variant must be normalized into:
+        {
+            "name": "",
+            "sku": "",
+            "price": 0,
+            "currency": "",
+            "size": ""
+        }
+
+        FIELD MAPPING (case-insensitive):
+        - Name → ("Variant Name", "name", "title")
+        - SKU → ("Variant SKU", "sku", "id")
+        - Price → ("Variant Price", "price", "amount")
+        - Currency → ("currency")
+        - Size → ("Size", "size")
+
+        Variant Cleaning:
+        - Remove NULL / empty / placeholder fields.
+        - Price must be numeric. Missing or invalid price → exclude the variant.
+        - Only include variants where currency matches the region.
+        - If currency is missing and cannot be inferred → EXCLUDE the variant.
+
+        7. Variant Source Rule:
+        Variants may contain "source", "source_url", "url", or "product_url".
+        If none exist → treat variant as NOT from an official source.
+
+        OFFICIAL SOURCE SITES:
+        - sgcricket.com
+        - teamsg.in
+        - sanspareils.co.in
+
+        A variant is OFFICIAL ONLY if its source URL contains one of the above domains.
+
+        8. Official SKU Selection
+        Determine one official SKU using these rules:
+
+        Valid conditions:
+        - Must come from an official source URL.
+        - Prefer manufacturer-style patterns (e.g., SG****).
+        - Prefer structured SKUs (4–12 alphanumeric characters).
+        - Prefer stable names (avoid year unless official).
+        - Ignore null, empty, or short numeric-only SKUs.
+
+        If multiple candidates:
+            - Choose the SKU that appears most frequently.
+            - If still tied → choose the SKU from the highest-priced official variant.
+
+        If no SKU qualifies → official_sku = "".
+
+        9. Non-Official SKU Handling
+        If a variant is NOT from an official source:
+        - Set its "sku" = "".
+        This overrides any SKU present.
+
+        10. SKU AND PRICE DIFFERENCE DO NOT CREATE VARIANTS
+        A product only has real variations when:
+        - size differs, OR
+        - color differs, OR
+        - material differs, OR
+        - quantity differs, OR
+        - pack-size differs.
+
+        Price differences or SKU differences alone do NOT represent different variants.
+
+        10A. VARIANT DEDUPLICATION LOGIC (CRITICAL)
+        Two variants represent the SAME product variant if the normalized name matches.
+        Normalization rules:
+        - lowercase
+        - remove punctuation
+        - remove filler words ("for", "the", "-", "_")
+
+        If multiple variants normalize to the same name:
+        - KEEP ONLY ONE variant.
+        - SELECT THE VARIANT WITH THE LOWEST PRICE.
+        - Other grouped variants must be discarded.
+        - If the kept variant’s SKU is not official → set sku = "".
+
+        This rule overrides SKU-based and price-based separation.
+
+        11. Final Variant Selection (MANDATORY)
+        After applying all rules:
+
+        If the product has NO real variations (same item across websites):
+            - Output ONLY ONE variant.
+            - Select the variant with the LOWEST price.
+            - If this selected variant’s SKU is NOT an official SKU → set "sku" = "".
+            - "variants" must contain exactly ONE variant.
+
+        Only include multiple variants when size, color, material, quantity, or pack-size differs.
+
+        FINAL OUTPUT:
+        Return ONLY the final JSON object described above.
+        Nothing else.
+
+    """
+
+
+    user_prompt = f"""
+            ### INPUT DATA
+            Product Name: "{product_name}"
+            Descriptions: {json.dumps(prod_description)}
+            Variants: {json.dumps(prod_variant)}
+            Images: {json.dumps(prod_images)}
+            Brands: {json.dumps(prod_brand)}
+            Region: "{region_info}"
+
+            -----------------------------------------------------
+            REGION-BASED VARIANT FILTERING (MANDATORY)
+            -----------------------------------------------------
+
+            1. The region is "{region_info}".
+
+            2. Region → Currency mapping:
+                - us → USD
+                - india → INR
+                - in → INR
+                - uk → GBP
+                - eu → EUR
+
+            3. Determine the correct region currency from the mapping above.
+
+            4. Include ONLY variants where:
+                - variant.currency EXACTLY matches the region currency.
+                - Exclude variants with any other currency.
+                - Exclude variants missing currency.
+                - Exclude variants that cannot confirm currency.
+
+            5. After currency filtering:
+                - From remaining variants, select ONLY the variant(s) with the **minimum price**.
+
+            6. If multiple variants share the same minimum price:
+                - Keep only one unless they differ in a real attribute 
+                (size, color, material, pack-size, quantity).
+
+            7. No currency conversion.
+            8. No assumptions.
+            9. Do not include multiple currencies.
+
+            -----------------------------------------------------
+            REQUIRED OUTPUT FORMAT
+            -----------------------------------------------------
+
+            {{
+            "title": "{product_name}",
+            "brand": "",
+            "official_sku": "",
+            "description": "",
+            "variants": [],
+            "images": []
+            }}
+        """
+
+
+    response = await call_llm(
+        llm,
+        prompt,
+        summary_prompt,
+        user_prompt
+    )
+
+    try:
+        print(response.content.strip())
+        return json.loads(response.content.strip())
+    except:
+        return json.loads(sanitize_json(response.content.strip()))
+
+
+
+def sanitize_json(text: str) -> str:
+    text = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
+    text = text.replace("```", "")
+
+    if "{" in text:
+        text = text[text.index("{"):]
+
+    return text.strip()
+
+
+async def normalize_info(prod_detail):
+    normalize_prompt = """
+        You are a JSON-only generator.
+
+        RULES:
+        - Output ONLY a valid JSON object.
+        - The output MUST start with "{" and end with "}".
+        - Do NOT include markdown, headings, ###, ####, Output:, ```, ```json and code fences.
+        - No explanations, no comments, no extra text.
+        - If the input is incomplete, use empty strings or empty arrays.
+        - Follow this exact structure and ensure every variant object has a "currency" field (string).
+
+        Structure:
+        {
+            "title": "",
+            "brand": "",
+            "description": "",
+            "price": {
+                "value": 0.0,
+                "currency": ""
+            },
+            "sku": "",
+            "category": "",
+            "images": [],
+            "variants": [
+                {
+                    "Variant Name": "",
+                    "Variant SKU": "",
+                    "Variant Price": 0.0,
+                    "Size": "",
+                    "currency": ""
+                }
+            ],
+            "attributes": {
+                "Color": "",
+                "Size": ""
+            }
+        }
+
+        Instruction:
+        - Analyze the input and set "price.currency" to the detected currency code (e.g., "INR", "USD").
+        - Add the same currency code into each variant's "currency" field.
+        - If you cannot detect currency, use empty string "".
+
+    """
+
+    clean_input = json.dumps(prod_detail, ensure_ascii=False, indent=2)
+
+    user_prompt = f"""
+        Convert the following product details into the JSON structure.
+
+        Return ONLY the JSON.
+
+        PRODUCT DATA:
+        {clean_input}
+    """
+
+    try:
+        extractor_response = await run_local_llm(
+            normalize_prompt,
+            user_prompt,
+        )
+
+        details = extractor_response.strip()
+        # print(f"Narmalize: {details}")
+        
+        try:
+            clean = sanitize_json(details)
+            parsed = json.loads(clean)
+        except Exception:
+            parsed = json.loads(details)
+    except Exception as e:
+        print(f"⚠️ Normalization error: {e}")
+        
+    return parsed
+
+def sanitize_json_online_llm(text: str) -> str:
+    text = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', text)
+    text = re.sub(r',\s*([}\]])', r'\1', text)
+    if not text.startswith("[") and not text.startswith("{"):
+        start = text.find("[")
+        if start != -1:
+            text = text[start:]
+    return text
+
+
+# def extract_inr_prices(text):
+#     prices = re.findall(r'(?:₹|INR\s*|Rs\.?\s*)(\d{2,6}(?:\.\d{1,2})?)', text, re.IGNORECASE)
+#     return [float(p.replace(",", "")) for p in prices if p]
+
+# def extract_inr_prices(data):
+#     prices = []
+#     try:
+#         for item in data:
+#             # print(type(item), item["json-ld"])
+#             if item["json-ld"]:
+#                 for entry in item.get("json-ld", []):
+#                     offers = entry.get("offers", [])
+#                     if isinstance(offers, list):
+#                         for offer in offers:
+#                             price = offer.get("lowPrice") or offer.get("highPrice") or offer.get("price")
+#                             if price is not None:
+#                                 prices.append(float(price))
+#                     else:
+#                         price = offer.get("lowPrice") or offer.get("highPrice") or offer.get("price")
+#                         if price is not None:
+#                             prices.append(float(price))
+
+#         if prices:
+#             min_price = min(prices)
+#             max_price = max(prices)
+#             print(f"Min Price: {min_price}")
+#             print(f"Max Price: {max_price}")
+#         else:
+#             print("No prices found.")
+#         print(prices)
+#     except Exception as e:
+#         print(f"Extraction INR price faild. {e}")
+
+#     return prices
+
+
+# def chunk_text(text, max_length=MAX_TOKENS_PER_REQUEST):
+#     chunks, current = [], ""
+#     for line in text.splitlines():
+#         if len(current) + len(line) > max_length:
+#             chunks.append(current)
+#             current = line
+#         else:
+#             current += line
+#     if current:
+#         chunks.append(current)
+#     return chunks
+
+
+# def extract_variant_prices(product_values):
+#     variant_price_map = {}
+#     for site_data in product_values:
+#         if not site_data:
+#             continue
+#         text = json.dumps(site_data)
+#         variant_matches = re.findall(
+#             r'(?:Size|Variant|Option)\s*[:\-]?\s*([A-Za-z0-9]+)[^₹RsINR]*(?:₹|Rs|INR\.?\s?)(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)',
+#             text, re.IGNORECASE
+#         )
+#         for variant, price in variant_matches:
+#             price_val = float(price.replace(",", ""))
+#             variant_price_map.setdefault(variant.strip(), []).append(price_val)
+
+#     summary = {}
+#     for variant, prices in variant_price_map.items():
+#         summary[variant] = {
+#             "Min": min(prices),
+#             "Max": max(prices),
+#             "Avg": round(sum(prices) / len(prices), 2),
+#             "Count": len(prices)
+#         }
+#     return summary
+
+
+###### ONLINE LLM NORMALIZATION ######
+
+# async def normalize_info(prod_detail):
+#     normalize_prompt = """
+#         You are an expert e-commerce data normalizer.
+
+#         Your job is to take raw web-scraped data of a product (possibly messy or inconsistent)
+#         and convert it into a standardized JSON format.
+
+#         ### Target JSON Schema
+#         {
+#         "title": "",
+#         "brand": "",
+#         "description": "",
+#         "price": {
+#             "value": 0.0,
+#             "currency": ""
+#         },
+#         "sku": "",
+#         "category": "",
+#         "images": [],
+#         "variants": [],
+#         "attributes": {
+#             "Color": "",
+#             "Size": ""
+#         }
+#         }
+
+#         ### Rules
+#         - If the input has multiple price formats, extract the most accurate one.
+#         - Always return valid JSON, matching the schema.
+#         - Use best guesses for missing fields, but never invent unrealistic data.
+#         - For images, return only clean, full URLs.
+
+#         ### OUTPUT
+#         A single JSON object matching the target schema.
+#         Return only a **valid JSON** (no Markdown, no commentary, no explanation).
+#     """
+
+#     clean_input = json.dumps(prod_detail, ensure_ascii=False, indent=2)
+
+#     user_prompt = f"""
+#         ### INPUT
+#         {clean_input}
+#     """
+
+#     extractor_response = await call_llm(
+#         llm,
+#         prompt,
+#         normalize_prompt,
+#         user_prompt,
+#     )
+
+#     details = extractor_response.content.strip()
+
+    
+#     # Try to parse the LLM response as JSON. If parsing fails, try a light sanitize
+#     try:
+#         parsed = json.loads(details)
+#     except Exception:
+#         try:
+#             parsed = json.loads(sanitize_json(details))
+#         except Exception:
+#             # Fall back to returning the raw string if we can't parse
+#             parsed = details
+
+#     return parsed
+
+# def sanitize_json(text: str) -> str:
+#     text = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', text)
+#     text = re.sub(r',\s*([}\]])', r'\1', text)
+#     if not text.startswith("[") and not text.startswith("{"):
+#         start = text.find("[")
+#         if start != -1:
+#             text = text[start:]
+#     return text

@@ -1,214 +1,206 @@
 import json
-import asyncio
 import os
-from langchain_core.messages import HumanMessage, AIMessage
-from yards.memory.conversation_memory import memory
-from yards.memory.qdrant_memory import get_session_history, store_message
-from yards.utils.config import KEY_CREDENTIALS
-from yards.agents.validation_agent import validation_agent
-import yards.utils.config as config
-from yards.utils.utils import llm_init, call_llm
+import pandas as pd
+import csv
+import re
+import asyncio
+from yards.utils.config import SHOPIFY_HEADERS
+from yards.utils.utils import llm_init, call_llm, price_conversion, convert_inr_to_usd
+from yards.utils.scrape_data import get_multi_source_product_pages, sanitize_json, sanitize_json_online_llm
 
 llm, prompt = llm_init()
 
 
-# Async discovery step
-async def discovery_step(state, websocket):    
-    if state.get('done') and (state.get('user_input')).lower() in ['yes','ok']:
-        await asyncio.sleep(2)
-        await websocket.send_json({
-                "status": 200,
-                "agent": "🚀 Your migration is starting... This may take a few minutes. Please wait patiently ⏳",
-        })
-        try:
-            await asyncio.sleep(2)
-            await websocket.send_json({
-                "status": 200,
-                "ready_for_migration": True,
-                "message": "⚡ The execution agent is currently running and processing your request.",
-            })
-            import_status = await init(websocket, state['collected_info'], state['mapping_task_detail'])
-            
-            if import_status:
-                validation = await validation_agent(state, websocket, state['mapping_task_detail'])
-                print("Validation status:", validation)                
-                return validation
-            else:
-                await websocket.send_json({
-                    "status": 500,
-                    "message": "❌ Migration failed due to an error during initialization."
-                })
-                
-        except Exception as e:
-            print("err", e)
-
-    # Build user input message
-    doc_values = state.get("doc_values", [])
-    context_str = "\n\n".join(doc_values) if doc_values else ""
-    user_msg_text = f"Context:\n{context_str}\n\nQuestion: {state['user_input']}"
-    user_input_msg = HumanMessage(content=user_msg_text)
-
-    # Store user message
-    store_message(state.get('user_id', ''), state.get('user_id', ''), 'user', user_msg_text)
-
-    # Get conversation history
-    history = get_session_history(state.get('user_id', ''), state.get('user_id', ''))
-
-    # -------------------------
-    # LLM 1 → JSON Extractor
-    # -------------------------
-    extractor_prompt = f"""
-    You are a JSON extractor.
-
-    Task:
-    From the user input, extract values for these fields: {", ".join(state["collected_info"].keys())}
-
-    Field meanings:
-    {json.dumps(KEY_CREDENTIALS, indent=2)}
-
-    Guidelines:
-    - Consider BOTH natural sentences ("My IDMC username is") AND direct values ( "root", "Databricks").
-    - If the user input is just a single value, map it to the MOST RECENTLY ASKED missing field.
-    - Prioritize the latest user input over older history.
-    - Include only fields explicitly provided (by sentence or value).
-    - Do not add null, empty, or N/A values.
-    - If user says "already provided" → skip it, keep the current value.
-    - Always respond with ONLY a valid JSON object (no text, no explanation).
-    - Only fill a field if the value clearly matches its definition.
-    - Never confuse passwords with URLs or tokens.
-
-    Conversation history: {history}
-    Latest user input: "{state['user_input']}"
-    """
-
-    extracted = {}
-    try:
-        extractor_response = await call_llm(llm, prompt, """You are a JSON extractor. Only return valid JSON.""", extractor_prompt)
-        raw_json = extractor_response.content.strip()
-        extracted = json.loads(raw_json)
-    except Exception as e:
-        print("Extractor failed:", e)
-        extracted = {}
-
-    # Merge extracted values into collected_info
-    for key, value in extracted.items():
-        if value in ["already provided", "N/A", None, ""]:
-            continue
-        if key in state["collected_info"] and not state["collected_info"][key]:
-            state["collected_info"][key] = value
-    
-    if state.get("initial_prompt") is True and state["collected_info"].get("source_api_url") is not None and state["collected_info"].get("source_api_token") is not None:
-        print(f"Initial prompt block {websocket}")
-        await websocket.send_json({
-            "status": 200,
-            "ready_for_migration": True,
-            "message": "⏳ Just a moment… The discovery agent is analyzing your folders and mapping structure. 🗂️",
-        })
-        try:
-            state["initial_prompt"] = False
-            host = state["collected_info"].get("source_api_url", "")
-            tok = state["collected_info"].get("source_api_token", "")
-            if host and tok:
-                config.DATABRICKS_HOST = host
-                config.TOKEN = tok
-                all_files = list_workspace("/")
-                await websocket.send_json({
-                    "status": 200,
-                    "ready_for_migration": True,
-                    "message": f"✅ Here’s the folder and mapping we found on your Databricks platform:",
-                })
-                # print("all_files", all_files)
-                
-                for file in all_files:
-                    folder_path, mapping_name = os.path.split(file)
-                    await websocket.send_json({
-                        "status": 200,
-                        "message": f"Folder: {folder_path}, Mapping name: {mapping_name}",
-                        "ready_for_migration": True,                    
-                    })
-                
-                await websocket.send_json({
-                        "status": 200,
-                        "client_id": state.get('user_id', ''),
-                        "agent": f"I've discovered {len(all_files)} mappings in your Databricks workspace"                  
-                    })
-                
-        except Exception as e:
-            print("err", e)
+async def discovery_step(state):
+    UPDATED_DIR = os.path.join("uploads", "updated_files")    
+    os.makedirs(UPDATED_DIR, exist_ok=True)    
 
     try:
-        # -------------------------
-        # Compute missing fields AFTER extraction
-        # -------------------------
-        missing_fields = [k for k, v in state["collected_info"].items() if not v]
+        file_path = state.get("file_path", "")
+        filename = state.get("filename", "")
+        if not os.path.exists(file_path):
+            return {"status": 404, "message": "File not found..."}
 
-        if missing_fields:
-            next_field = missing_fields[0]
-            # Prepare system prompt for conversational LLM
-            SYSTEM_PROMPT_STRING_ABOVE = f"""
-            You are Discovery AI Assistant for migrating mappings into Informatica IDMC.
+        print(f"Processing file: {filename}")
 
-            Missing field (do NOT show this to user): {KEY_CREDENTIALS[next_field]}
+        file_extension = os.path.splitext(filename)[1].lower()
+        filename_no_ext = os.path.splitext(filename)[0]
 
-            Style & Behavior:
-            - Be polite and brief (1 short sentence).
-            - Ask ONLY for this missing detail: {next_field}.
-            - Ask question from the missing fields in order until filled.
-            - Never repeat or display credentials once the user provides them.
-            - If the user cannot share a credential, store placeholder {{CREDENTIAL_NAME}}.
-            - If all required values are filled, respond: "✅ All required values are collected."
-            - Never echo user inputs or credentials.
-            """
+        # --- Load input file ---
+        if file_extension == ".csv":
+            file_info = pd.read_csv(file_path)
+        elif file_extension in [".xlsx", ".xls"]:
+            file_info = pd.read_excel(file_path)
         else:
-            SYSTEM_PROMPT_STRING_ABOVE = """
-            You are Discovery AI Assistant for migrating mappings into Informatica IDMC.
-            ✅ All required values are collected.
+            raise ValueError("Unsupported file format")
 
-            Your task:
-            - Politely confirm this.
-            - Then ask: "We got the necessary information. Can we migrate mappings from Databricks to IDMC?"
+        # --- Extract product titles ---
+        product_titles = [
+            row["Title"]
+            for row in file_info.to_dict(orient="records")
+            if pd.notna(row.get("Title", "") and row.get("Title", "").strip() != "")
+        ]
+
+        # --- Scrape websites ---
+        scraper_response = await get_multi_source_product_pages(product_titles)
+        
+        all_products = []
+
+        # --- Process each product ---
+        for product_detail in scraper_response:
+            # SUPER STRICT prompt
+            user_prompt = f"""
+                Convert the following product data into a Shopify CSV-compatible JSON array.
+
+                RULES (STRICT):
+                1. Output ONLY a valid JSON array. No text, markdown, comments, or explanations.
+                2. Each array item MUST represent exactly ONE variant.
+                3. Each object MUST contain ALL Shopify CSV headers EXACTLY as listed. No extra keys.
+                4. Use ONLY flat string values. If a field is missing, use "".
+                5. Wrap all keys and string values in double quotes.
+                6. FINAL output MUST parse with json.loads() without corrections.
+                7. Vendor MUST be the product's brand value. If brand is missing, use "".
+                
+                VARIANT RULES:
+                - Option1 Name MUST be "Size".
+                - Option1 Value MUST include only the numeric or letter part (e.g., "Size 3" → "3", "Size L" → "L").
+                - One object per variant. If no variants, create a single default variant.
+                - Generate "Handle" from Title: lowercase, alphanumeric + hyphens, spaces → hyphens.
+                - Wrap product description in "<p>...</p>".
+                - "Image Src" must be absolute URLs. Assign "Image Position" sequentially for multiple images.
+
+                SEO RULES:
+                - If missing, generate intelligently:
+                - "SEO Title": short and keyword-rich
+                - "SEO Description": one sentence highlighting purpose/benefit
+                - "Image Alt Text": descriptive and SEO friendly
+                - "Tags": comma-separated keywords
+                - Google Shopping fields: infer if possible, else ""
+                - "Condition" defaults to "new"                
+
+                SHOPIFY HEADERS:
+                {", ".join(SHOPIFY_HEADERS)}
+
+                Input product data:
+                {product_detail}
             """
 
-        # Conversational LLM call
-        try:
-            response = await call_llm(llm, prompt, SYSTEM_PROMPT_STRING_ABOVE, history + [user_input_msg])            
-        except Exception as e:
-            print(f"LLM 2 (Conversational) error: {e}")
-            return state
+            sys_prompt = """
+                You are an expert Shopify product data builder and eCommerce SEO specialist.
 
-        ai_msg = AIMessage(content=response.content)
-        store_message(state.get('user_id', ''), state.get('user_id', ''), 'agent', response.content)
+                Strict output rule:
+                - Return **pure JSON only**.
+                - The output must **begin with `[` and end with `]`**.
+                - Do **not** include any explanations, text, labels, or markdown.
+                - Do **not** prefix with lines like “Here is the processed JSON array:” or “Output:”.
+                - Use empty strings ("") for missing text values and empty arrays ([]) for missing list values.
+                - Remove all newline characters inside the "Body (HTML)".
+                - Escape all double quotes (") as ".
+            """
 
-        # -------------------------
-        # Final state update
-        # -------------------------
-        state["done"] = all(state["collected_info"].values())
-        state["last_answer"] = response.content if not state["done"] else \
-            "👋 Hey user, I’ve received all the required credentials. Would you like me to proceed with migrating the mappings shown on the right side?"
+            try:
+                # --- Call LLM ---
+                extractor_response = await call_llm(
+                    llm,
+                    prompt,
+                    sys_prompt,
+                    user_prompt
+                )
 
-        # # Send update to frontend
-        # if websocket:
-        #     asyncio.create_task(websocket.send_json({
-        #         "status": "intermediate",
-        #         "agent": response.content,
-        #         "collected_info": state["collected_info"]
-        #     }))
+                raw_json = extractor_response.content.strip()
+                raw_json = sanitize_json_online_llm(raw_json)
+
+                # --- Parse JSON ---
+                try:
+                    extracted = json.loads(raw_json)
+                except:
+                    extracted = json.loads(sanitize_json_online_llm(raw_json))
+
+                # Normalize to list
+                if isinstance(extracted, dict):
+                    extracted = [extracted]
+                elif isinstance(extracted, str):
+                    try:
+                        extracted = json.loads(extracted)
+                    except:
+                        extracted = []
+
+                all_products.extend(extracted)
+                print(all_products)
+
+            except Exception as e:
+                print(f"⚠️ Error extracting: {e}")
+
+        # --- Write output CSV ---
+        output_file = os.path.join(UPDATED_DIR, f"{filename_no_ext}.csv")
         
-        
-        await websocket.send_json({
-            "status": 200,
-            "client_id": state.get('user_id', ''),
-            "phase": "discovery",
-            "agent": state["last_answer"],
-            "collected_info": state["collected_info"]
-        })
+        manufacturer_details = {}
+        with open(output_file, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=SHOPIFY_HEADERS)
+            writer.writeheader()
 
-        return {
-            "history": [user_input_msg, ai_msg],
-            "last_answer": state["last_answer"],
-            "collected_info": state["collected_info"],
-            "done": state["done"]
-        }
+            for item in all_products:
+                if not isinstance(item, dict):
+                    continue
+
+                for key, value in list(item.items()):
+                    if isinstance(value, list):
+                        item[key] = ", ".join(map(str, value))
+
+                clean_item = {}
+                item_name = item.get("Title", "")
+                brand_name = ''
+                for k in SHOPIFY_HEADERS:
+                    value = item.get(k, "")
+                    if k == "Vendor":
+                        print(f"VENDOR : {k}, Value: {value.lower()}")
+                        price_info = {}
+                        
+                        MANUFACTURER_DIR = None
+                        if "mrf" in value.lower():
+                            MANUFACTURER_DIR = os.path.join("manufacturer", "mrf.xlsx")
+                            brand_name = "mrf"
+                        elif "moonwalkr" in value.lower():
+                            MANUFACTURER_DIR = os.path.join("manufacturer", "moonwalkr.xlsx")
+                            brand_name = "moonwalkr"
+                        elif "sg" in value.lower():
+                            MANUFACTURER_DIR = os.path.join("manufacturer", "sg.xlsx")
+                            brand_name = "sg"
+
+                        print(f"MANUFACTURER_DIR : {MANUFACTURER_DIR}, BRAND NAME: {brand_name}, VALUE: {not brand_name in manufacturer_details}")
+                        
+                        if brand_name and not brand_name in manufacturer_details:
+                            if MANUFACTURER_DIR and os.path.exists(MANUFACTURER_DIR):
+                                manufacturer_ext = os.path.splitext(MANUFACTURER_DIR)[1].lower()
+                                if manufacturer_ext in [".xlsx", ".xls"]:
+                                    manufacturer_info = pd.read_excel(MANUFACTURER_DIR)
+                                    for row in manufacturer_info.to_dict(orient="records"):
+                                        if pd.notna(row.get("Retailer Price in USD")):
+                                            price_info[row['Sub Catergory'].lower()] = row['Retailer Price in USD']
+
+                                    manufacturer_details[brand_name] = price_info
+                                    print(manufacturer_details)
+
+                    if brand_name and brand_name in manufacturer_details:
+                        # print(f"item_name: {item_name}, {item_name.lower() in manufacturer_details[brand_name]}")
+                        
+                        if k in ["Variant Price", "Price / United States", "Price / International"]:
+                            try:
+                                print(f"Processing key: {k} with value: {value}")
+                                cost_price = float(manufacturer_details[brand_name][item_name.lower()])
+                                print(f"MINIMUM PRICE: {float(item.get(k))}")
+                                lowest_price_websites = convert_inr_to_usd(float(item.get(k)))
+                                calculated_price = price_conversion(cost_price, lowest_price_websites)
+                                print(f"Price INFO: {lowest_price_websites}, {cost_price}, Calculated Price: {calculated_price}")
+                                item[k] = round(calculated_price, 2)
+                            except Exception as e:
+                                print(f"PRICE CALCULATION ERROR: {e}")
+                    
+                    clean_item[k] = str(value)
+
+                writer.writerow(clean_item)
+
+        print(f"✅ Completed extraction for {filename_no_ext}, total products: {len(all_products)}")
 
     except Exception as e:
-        print(e)
+        print(f"❌ Error in discovery_step: {e}")
