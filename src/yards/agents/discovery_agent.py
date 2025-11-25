@@ -82,6 +82,7 @@ async def discovery_step(state):
                     - Generate "Handle" from Title: lowercase, alphanumeric + hyphens, spaces → hyphens.
                     - Wrap product description in "<p>...</p>".
                     - "Image Src" must be absolute URLs. Assign "Image Position" sequentially for multiple images.
+                    - If we have multiple images, don't consider as multiple variants. Use any one of the image.
 
                     SEO RULES:
                     - If missing, generate intelligently:
