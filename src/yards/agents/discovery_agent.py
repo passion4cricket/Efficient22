@@ -1,34 +1,18 @@
 import json
-import os, pandas as pd, csv, re, asyncio
-from yards.utils.config import SHOPIFY_HEADERS, PROMPT_TEMPLATES
-from yards.utils.utils import llm_init, call_llm
-from yards.utils.scrape_data import get_multi_source_product_pages
+import os
+import pandas as pd
+import csv
+import re
+import asyncio
+from yards.utils.config import SHOPIFY_HEADERS
+from yards.utils.utils import llm_init, call_llm, price_conversion, convert_inr_to_usd
+from yards.utils.scrape_data import get_multi_source_product_pages, sanitize_json, sanitize_json_online_llm
 
 llm, prompt = llm_init()
 
-# -------- Helper Functions --------
-MAX_TOKENS_PER_REQUEST = 4000  # stay well below Groq 6000 TPM limit
 
-def chunk_text(text, max_length=MAX_TOKENS_PER_REQUEST):
-    """Split text into manageable chunks (approx tokens)."""
-    return [text[i:i + max_length] for i in range(0, len(text), max_length)]
-
-def sanitize_json(text: str) -> str:
-    """Try to fix malformed JSON returned by LLM."""
-    text = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', text)
-    text = re.sub(r',\s*([}\]])', r'\1', text)
-    if not text.startswith("[") and not text.startswith("{"):
-        start = text.find("[")
-        if start != -1:
-            text = text[start:]
-    if text.count('"') % 2 != 0:
-        text += '"'
-    return text
-
-
-# -------- Main Discovery Step --------
 async def discovery_step(state):
-    UPDATED_DIR = os.path.join("uploads", "updated_files")
+    UPDATED_DIR = os.path.join("uploads", "updated_files")    
     os.makedirs(UPDATED_DIR, exist_ok=True)
 
     try:
@@ -37,14 +21,12 @@ async def discovery_step(state):
         if not os.path.exists(file_path):
             return {"status": 404, "message": "File not found..."}
 
-        product_titles = []
-        missing_info = []
-
         print(f"Processing file: {filename}")
+
         file_extension = os.path.splitext(filename)[1].lower()
         filename_no_ext = os.path.splitext(filename)[0]
 
-        # --- Load product titles ---
+        # --- Load input file ---
         if file_extension == ".csv":
             file_info = pd.read_csv(file_path)
         elif file_extension in [".xlsx", ".xls"]:
@@ -52,92 +34,189 @@ async def discovery_step(state):
         else:
             raise ValueError("Unsupported file format")
 
-        for data in file_info.to_dict(orient="records"):
-            title = data.get("Title", "")
-            if pd.notna(title) and title.strip() != "":
-                product_titles.append(title)
-                missing_info.append(title)
+        # --- Extract product titles ---
+        product_titles = [
+            row["Title"]
+            for row in file_info.to_dict(orient="records")
+            if pd.notna(row.get("Title", "") and row.get("Title", "").strip() != "")
+        ]
 
-        # --- Scrape product data ---
+        # --- Scrape data ---
         scraper_response = await get_multi_source_product_pages(product_titles)
 
-        if not scraper_response:
-            chunks = [f"{PROMPT_TEMPLATES['user_prompt_prod_details']}\n\n(No scraped data found — skip processing)"]
-        else:
-            raw_scraped = str(scraper_response)
-            chunks = chunk_text(raw_scraped)
-
-        all_products = []
-
-        # --- Process each chunk through LLM ---
-        for i, chunk in enumerate(chunks, start=1):
-            print(f"🧩 Processing chunk {i}/{len(chunks)} (length={len(chunk)})")
-            user_prompt = (
-                f"{PROMPT_TEMPLATES['user_prompt_prod_details']}\n\n"
-                f"💡 Variant Expansion Rule (critical):\n"
-                f"- Detect variant-defining fields such as Size, Grade, Weight, Model, or Color from scraped data.\n"
-                f"- Map them to Shopify Option fields:\n"
-                f"  * 'Size' → Option1 Name/Value\n"
-                f"  * 'Color' → Option2 Name/Value\n"
-                f"  * 'Grade', 'Edition', 'Profile' → Option1 Name/Value (if Size not present)\n"
-                f"- Ensure each variant becomes a **separate JSON object** with its Option1 Value populated.\n\n"
-                f"Scraped data (part {i} of {len(chunks)}):\n{chunk}"
-            )
-
-
-            try:
-                extractor_response = await call_llm(
-                    llm,
-                    prompt,
-                    PROMPT_TEMPLATES['get_column_details'],
-                    user_prompt,
-                )
-
-                raw_json = extractor_response.content.strip()
-                raw_json = sanitize_json(raw_json)                
-
-                try:
-                    extracted = json.loads(raw_json)
-                except json.JSONDecodeError:
-                    extracted = json.loads(sanitize_json(raw_json))
-
-                if isinstance(extracted, dict):
-                    extracted = [extracted]
-                elif isinstance(extracted, str):
-                    try:
-                        extracted = json.loads(extracted)
-                    except:
-                        extracted = []
-
-                all_products.extend(extracted)
-
-            except Exception as e:
-                print(f"⚠️ Error extracting JSON for chunk {i}: {e}")
-
-            # Respect rate limit between calls
-            await asyncio.sleep(1)
-
-        # --- Write merged results to CSV ---
+        # --- Prepare CSV output file ---
         output_file = os.path.join(UPDATED_DIR, f"{filename_no_ext}.csv")
+        manufacturer_details = {}
+
         with open(output_file, "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=SHOPIFY_HEADERS)
             writer.writeheader()
 
-            for item in all_products:
-                if not isinstance(item, dict):
-                    continue
-                for key, value in list(item.items()):
-                    if isinstance(value, list):
-                        item[key] = ", ".join(map(str, value))
-                writer.writerow(item)
+            # --------------------------------------------
+            # PROCESS EACH PRODUCT AND WRITE IMMEDIATELY
+            # --------------------------------------------
+            for product_detail in scraper_response:
 
-        print(f"✅ Completed extraction for {filename_no_ext}, total products: {len(all_products)}")
+                # STRICT PROMPT
+                user_prompt = f"""
+                    Convert the following product data into a Shopify CSV-compatible JSON array.
+
+                    RULES (STRICT):
+                    1. Output ONLY a valid JSON array. No text, markdown, comments, or explanations.
+                    2. Each array item MUST represent exactly ONE variant.
+                    3. Each object MUST contain ALL Shopify CSV headers EXACTLY as listed. No extra keys.
+                    4. Use ONLY flat string values. If a field is missing, use "".
+                    5. Wrap all keys and string values in double quotes.
+                    6. FINAL output MUST parse with json.loads() without corrections.
+                    7. Vendor MUST be the product's brand value. If brand is missing, use "".
+                    
+                    VARIANT RULES:
+                    - Option1 Name MUST be "Size".
+                    - Option1 Value MUST include only the numeric or letter part (e.g., "Size 3" → "3", "Size L" → "L").
+                    - If the product has no real size/color variants, generate ONLY ONE variant.
+                    - Do NOT create a variant per image.
+                    - Instead: repeat the same variant row for each image, changing ONLY:
+                        - "Image Src"
+                        - "Image Position"
+                        - "Image Alt Text"
+                    - Generate "Handle" from Title: lowercase, alphanumeric + hyphens, spaces → hyphens.
+                    - Wrap product description in "<p>...</p>".
+                    - "Image Src" must be absolute URLs. Assign "Image Position" sequentially for multiple images.
+
+                    SEO RULES:
+                    - If missing, generate intelligently:
+                    - "SEO Title": short and keyword-rich
+                    - "SEO Description": one sentence highlighting purpose/benefit
+                    - "Image Alt Text": descriptive and SEO friendly
+                    - "Tags": comma-separated keywords
+                    - Google Shopping fields: infer if possible, else ""
+                    - "Condition" defaults to "new"                
+
+                    SHOPIFY HEADERS:
+                    {", ".join(SHOPIFY_HEADERS)}
+
+                    Input product data:
+                    {product_detail}
+                """
+
+                sys_prompt = """
+                    You are an expert Shopify product data builder and eCommerce SEO specialist.
+
+                    Strict output rule:
+                    - Return **pure JSON only**.
+                    - The output must **begin with `[` and end with `]`**.
+                    - Do **not** include any explanations, text, labels, or markdown.
+                    - Do **not** prefix with lines like “Here is the processed JSON array:” or “Output:”.
+                    - Use empty strings ("") for missing text values and empty arrays ([]) for missing list values.
+                    - Remove all newline characters inside the "Body (HTML)".
+                    - Escape all double quotes (") as ".
+                """
+
+                # -------------------------
+                # CALL LLM FOR THIS PRODUCT
+                # -------------------------
+                try:
+                    extractor_response = await call_llm(
+                        llm, prompt, sys_prompt, user_prompt
+                    )
+
+                    raw_json = extractor_response.content.strip()
+                    raw_json = sanitize_json_online_llm(raw_json)
+
+                    try:
+                        extracted = json.loads(raw_json)
+                    except:
+                        extracted = json.loads(sanitize_json_online_llm(raw_json))
+
+                    # Normalize to list
+                    if isinstance(extracted, dict):
+                        extracted = [extracted]
+                    elif isinstance(extracted, str):
+                        try:
+                            extracted = json.loads(extracted)
+                        except:
+                            extracted = []
+
+                    # ----------------------------------------------
+                    # WRITE EACH VARIANT (each dict) TO CSV DIRECTLY
+                    # ----------------------------------------------
+                    for item in extracted:
+
+                        if not isinstance(item, dict):
+                            continue
+
+                        # Convert list → string
+                        for key, value in list(item.items()):
+                            if isinstance(value, list):
+                                item[key] = ", ".join(map(str, value))
+
+                        clean_item = {}
+                        item_name = item.get("Title", "").strip()
+                        brand_name = ""
+
+                        # --------------------------------------------
+                        # POPULATE ALL SHOPIFY HEADERS
+                        # --------------------------------------------
+                        for k in SHOPIFY_HEADERS:
+                            value = item.get(k, "")
+
+                            # --------------------------------------------
+                            # MANUFACTURER PRICE LOGIC — SAME AS YOUR CODE
+                            # --------------------------------------------
+                            if k == "Vendor":
+                                vendor = value.lower()
+
+                                MANUFACTURER_DIR = None
+                                if "mrf" in vendor:
+                                    MANUFACTURER_DIR = os.path.join("manufacturer", "mrf.xlsx")
+                                    brand_name = "mrf"
+                                elif "moonwalkr" in vendor:
+                                    MANUFACTURER_DIR = os.path.join("manufacturer", "moonwalkr.xlsx")
+                                    brand_name = "moonwalkr"
+                                elif "sg" in vendor:
+                                    MANUFACTURER_DIR = os.path.join("manufacturer", "sg.xlsx")
+                                    brand_name = "sg"
+
+                                # Load manufacturer details only once
+                                if brand_name and brand_name not in manufacturer_details:
+                                    if MANUFACTURER_DIR and os.path.exists(MANUFACTURER_DIR):
+                                        df = pd.read_excel(MANUFACTURER_DIR)
+                                        price_map = {}
+
+                                        for row in df.to_dict(orient="records"):
+                                            subcat = row.get("Sub Catergory")
+                                            usd = row.get("Retailer Price in USD")
+                                            if pd.notna(subcat) and pd.notna(usd):
+                                                price_map[str(subcat).lower()] = usd
+
+                                        manufacturer_details[brand_name] = price_map
+
+                            # --------------------------------------------
+                            # PRICE UPDATE LOGIC
+                            # --------------------------------------------
+                            if brand_name and brand_name in manufacturer_details:
+                                if k in ["Variant Price", "Price / United States", "Price / International"]:
+                                    try:
+                                        cost_price = float(
+                                            manufacturer_details[brand_name][item_name.lower()]
+                                        )
+                                        base_price = float(item.get(k))
+                                        # lowest_price = convert_inr_to_usd(base_price)
+                                        # value = round(
+                                        #     price_conversion(cost_price, lowest_price), 2
+                                        # )
+                                    except Exception as e:
+                                        print(f"Price calc error: {e}")
+
+                            clean_item[k] = str(value)
+
+                        # WRITE THE ROW
+                        writer.writerow(clean_item)
+
+                except Exception as e:
+                    print(f"⚠️ Error extracting: {e}")
+
+        print(f"✅ Completed extraction for {filename_no_ext}")
 
     except Exception as e:
         print(f"❌ Error in discovery_step: {e}")
-
-        
-        
-"""
-    Handle, Title, Body (HTML), Vendor, Product Category, Type, Tags, Published, Option1 Name, Option1 Value, Option2 Name, Option2 Value, Option3 Name, Option3 Value,Variant SKU, Variant Grams, Variant Inventory Tracker, Variant Inventory Qty,Variant Inventory Policy, Variant Fulfillment Service, Variant Price, Variant Compare At Price, Variant Requires Shipping,	Variant Taxable,Variant Barcode, Image Src,	Image Position,	Image Alt Text,	Gift Card, SEO Title, SEO Description, Google Shopping / Google Product Category, Google Shopping / Gender, Google Shopping / Age Group, Google Shopping / MPN,	Google Shopping / Condition,	Google Shopping / Custom Product, Variant Image, Variant Weight Unit, Variant Tax Code,	Cost per item, Included / United States, Price / United States,	Compare At Price / United States, Included / International,	Price / International, Compare At Price / International, Status 
-"""   
