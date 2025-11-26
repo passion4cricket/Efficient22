@@ -395,6 +395,8 @@ async def summarize_product_info(product_name, product_values, region_info="us")
         5. Images
         - Include only valid http/https URLs.
         - Remove duplicates.
+        - ALWAYS return ONLY ONE image:
+            → the first valid http/https URL after deduplication.
 
         6. Variant Structure
         Each variant must be normalized into:
@@ -415,9 +417,9 @@ async def summarize_product_info(product_name, product_values, region_info="us")
 
         Variant Cleaning:
         - Remove NULL / empty / placeholder fields.
-        - Price must be numeric. Missing or invalid price → exclude the variant.
+        - Price must be numeric. Missing or invalid price → exclude variant.
         - Only include variants where currency matches the region.
-        - If currency is missing and cannot be inferred → EXCLUDE the variant.
+        - If currency is missing and cannot be inferred → EXCLUDE variant.
 
         7. Variant Source Rule:
         Variants may contain "source", "source_url", "url", or "product_url".
@@ -430,124 +432,113 @@ async def summarize_product_info(product_name, product_values, region_info="us")
 
         A variant is OFFICIAL ONLY if its source URL contains one of the above domains.
 
-        8. Official SKU Selection
-        Determine one official SKU using these rules:
+        8. Official SKU Selection:
+        ***OFFICIAL SKU MUST BE SELECTED ONLY FROM VARIANTS THAT PASSED REGION-BASED CURRENCY FILTERING.***
 
         Valid conditions:
         - Must come from an official source URL.
         - Prefer manufacturer-style patterns (e.g., SG****).
         - Prefer structured SKUs (4–12 alphanumeric characters).
-        - Prefer stable names (avoid year unless official).
-        - Ignore null, empty, or short numeric-only SKUs.
+        - Prefer stable names.
+        - Ignore null, empty, short numeric-only SKUs.
 
-        If multiple candidates:
-            - Choose the SKU that appears most frequently.
-            - If still tied → choose the SKU from the highest-priced official variant.
+        Tie-breakers:
+        1. Most frequent SKU.
+        2. Highest priced official variant.
+        If none qualify → official_sku = "".
 
-        If no SKU qualifies → official_sku = "".
+        9. Non-Official SKU Handling:
+        If variant is NOT from an official source:
+        - Set "sku" = "".
 
-        9. Non-Official SKU Handling
-        If a variant is NOT from an official source:
-        - Set its "sku" = "".
-        This overrides any SKU present.
+        10. SKU AND PRICE DIFFERENCE DO NOT CREATE VARIANTS:
+        Only real attributes create variants:
+        - size
+        - color
+        - material
+        - quantity
+        - pack-size
 
-        10. SKU AND PRICE DIFFERENCE DO NOT CREATE VARIANTS
-        A product only has real variations when:
-        - size differs, OR
-        - color differs, OR
-        - material differs, OR
-        - quantity differs, OR
-        - pack-size differs.
+        Variant NAME/TITLE must NOT be considered a real attribute and must NEVER create separate variants.
+        If variants differ ONLY by name/title, treat them as the SAME variant.
 
-        Price differences or SKU differences alone do NOT represent different variants.
-
-        10A. VARIANT DEDUPLICATION LOGIC (CRITICAL)
-        Two variants represent the SAME product variant if the normalized name matches.
-        Normalization rules:
+        11. VARIANT DEDUPLICATION:
+        Normalize name:
         - lowercase
         - remove punctuation
-        - remove filler words ("for", "the", "-", "_")
+        - remove filler words: "for", "the", "-", "_"
 
-        If multiple variants normalize to the same name:
-        - KEEP ONLY ONE variant.
-        - SELECT THE VARIANT WITH THE LOWEST PRICE.
-        - Other grouped variants must be discarded.
-        - If the kept variant’s SKU is not official → set sku = "".
+        If duplicates:
+        - KEEP ONLY ONE
+        - Choose the variant with lowest price
+        - If retained variant SKU is not official → sku = ""
 
-        This rule overrides SKU-based and price-based separation.
-
-        11. Final Variant Selection (MANDATORY)
-        After applying all rules:
-
-        If the product has NO real variations (same item across websites):
-            - Output ONLY ONE variant.
-            - Select the variant with the LOWEST price.
-            - If this selected variant’s SKU is NOT an official SKU → set "sku" = "".
-            - "variants" must contain exactly ONE variant.
-
-        Only include multiple variants when size, color, material, quantity, or pack-size differs.
+        12. Final Variant Selection:
+        If no real variation exists:
+        - Output ONLY ONE variant
+        - Select variant with lowest price
+        - If that SKU is not official → sku = ""
 
         FINAL OUTPUT:
-        Return ONLY the final JSON object described above.
+        Return ONLY the final JSON object.
         Nothing else.
 
-    """
+
+"""
+
 
 
     user_prompt = f"""
-            ### INPUT DATA
-            Product Name: "{product_name}"
-            Descriptions: {json.dumps(prod_description)}
-            Variants: {json.dumps(prod_variant)}
-            Images: {json.dumps(prod_images)}
-            Brands: {json.dumps(prod_brand)}
-            Region: "{region_info}"
+       ### INPUT DATA
+        Product Name: "{product_name}"
+        Descriptions: {json.dumps(prod_description)}
+        Variants: {json.dumps(prod_variant)}
+        Images: {json.dumps(prod_images)}
+        Brands: {json.dumps(prod_brand)}
+        Region: "{region_info}"
 
-            -----------------------------------------------------
-            REGION-BASED VARIANT FILTERING (MANDATORY)
-            -----------------------------------------------------
+        -----------------------------------------------------
+        REGION-BASED VARIANT FILTERING (MANDATORY)
+        -----------------------------------------------------
 
-            1. The region is "{region_info}".
+        1. The region is "{region_info}".
 
-            2. Region → Currency mapping:
-                - us → USD
-                - india → INR
-                - in → INR
-                - uk → GBP
-                - eu → EUR
+        2. Region → Currency mapping:
+            - us → USD
+            - india → INR
+            - in → INR
+            - uk → GBP
+            - eu → EUR
 
-            3. Determine the correct region currency from the mapping above.
+        3. Determine the correct region currency.
 
-            4. Include ONLY variants where:
-                - variant.currency EXACTLY matches the region currency.
-                - Exclude variants with any other currency.
-                - Exclude variants missing currency.
-                - Exclude variants that cannot confirm currency.
+        4. HARD FILTER:
+            - REMOVE every variant whose currency does NOT EXACTLY match the region currency.
+            - No fallback, no inference.
+            - No currency conversion.
 
-            5. After currency filtering:
-                - From remaining variants, select ONLY the variant(s) with the **minimum price**.
+        5. After filtering:
+            - Keep only variant(s) with the LOWEST price.
+            - If multiple share same lowest price:
+                → keep only one unless they differ in real attribute.
 
-            6. If multiple variants share the same minimum price:
-                - Keep only one unless they differ in a real attribute 
-                (size, color, material, pack-size, quantity).
+        6. No assumptions.
+        7. No multiple currencies allowed.
 
-            7. No currency conversion.
-            8. No assumptions.
-            9. Do not include multiple currencies.
+        -----------------------------------------------------
+        REQUIRED OUTPUT FORMAT
+        -----------------------------------------------------
 
-            -----------------------------------------------------
-            REQUIRED OUTPUT FORMAT
-            -----------------------------------------------------
+        {{
+        "title": "{product_name}",
+        "brand": "",
+        "official_sku": "",
+        "description": "",
+        "variants": [],
+        "images": []
+        }}
 
-            {{
-            "title": "{product_name}",
-            "brand": "",
-            "official_sku": "",
-            "description": "",
-            "variants": [],
-            "images": []
-            }}
-        """
+    """
 
 
     response = await call_llm(

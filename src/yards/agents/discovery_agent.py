@@ -69,20 +69,30 @@ async def discovery_step(state):
                     5. Wrap all keys and string values in double quotes.
                     6. FINAL output MUST parse with json.loads() without corrections.
                     7. Vendor MUST be the product's brand value. If brand is missing, use "".
-                    
+
                     VARIANT RULES:
-                    - Option1 Name MUST be "Size".
-                    - Option1 Value MUST include only the numeric or letter part (e.g., "Size 3" → "3", "Size L" → "L").
-                    - If the product has no real size/color variants, generate ONLY ONE variant.
+                    - Variants MUST be created ONLY based on these attributes:
+                        • Color
+                        • Size
+                        • Material
+                    - Do NOT generate variants based on image count, image URLs, price differences, or stock.
+                    - If the product contains multiple values for any of the above (Color, Size, Material), generate variant combinations.
+                    - If the product has none of these variant attributes, generate ONLY ONE variant.
+                    - Option1 Name MUST be "Size" if size exists; otherwise use the next available attribute.
+                    - Option2 Name MUST be "Color" if color exists.
+                    - Option3 Name MUST be "Material" if material exists.
+                    - Option values MUST contain only clean text (e.g., "Size 3" → "3", "Red Color" → "Red").
                     - Do NOT create a variant per image.
-                    - Instead: repeat the same variant row for each image, changing ONLY:
-                        - "Image Src"
-                        - "Image Position"
-                        - "Image Alt Text"
+                    - Images must be duplicated across variants:
+                        • Repeat the same variant record for each image
+                        • Change ONLY:
+                            - "Image Src"
+                            - "Image Position"
+                            - "Image Alt Text"
                     - Generate "Handle" from Title: lowercase, alphanumeric + hyphens, spaces → hyphens.
                     - Wrap product description in "<p>...</p>".
-                    - "Image Src" must be absolute URLs. Assign "Image Position" sequentially for multiple images.
-                    - If we have multiple images, don't consider as multiple variants. Use any one of the image.
+                    - "Image Src" must be absolute URLs.
+                    - Assign "Image Position" sequentially for multiple images.
 
                     SEO RULES:
                     - If missing, generate intelligently:
@@ -91,13 +101,14 @@ async def discovery_step(state):
                     - "Image Alt Text": descriptive and SEO friendly
                     - "Tags": comma-separated keywords
                     - Google Shopping fields: infer if possible, else ""
-                    - "Condition" defaults to "new"                
+                    - "Condition" defaults to "new"
 
                     SHOPIFY HEADERS:
                     {", ".join(SHOPIFY_HEADERS)}
 
                     Input product data:
                     {product_detail}
+
                 """
 
                 sys_prompt = """
