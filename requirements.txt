@@ -17,3 +17,10 @@ sentence_transformers==5.1.0
 sqlglot==27.4.1
 ttkbootstrap==1.14.1
 uvicorn==0.37.0
+ollama
+yfinance
+playwright
+extruct
+rapidfuzz
+tldextract
+python-multipart
