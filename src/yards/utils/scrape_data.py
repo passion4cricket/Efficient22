@@ -87,9 +87,6 @@ async def fetch_page_in_thread(url: str, timeout_ms: int = 40000) -> str:
     return await future
 
 
-# ----------------------------------------------------------
-# Variant Extractors
-# ----------------------------------------------------------
 async def extract_variants_generic(soup, data):
     variants = []
     for entry in data.get("json-ld", []):
@@ -122,7 +119,6 @@ async def extract_variants_generic(soup, data):
                         variants.append({"Variant Name": value})
     return variants
 
-
 async def extract_variants_from_shopify(soup):
     variants = []
     script_tags = soup.find_all("script", string=re.compile(r"Shopify\.product|var meta"))
@@ -147,10 +143,6 @@ async def extract_variants_from_shopify(soup):
                 print(f"[⚠️ Shopify JSON parse error] {e}")
     return variants
 
-
-# ----------------------------------------------------------
-# Product Info Extractor
-# ----------------------------------------------------------
 async def extract_product_info(url):
     try:
         html = await fetch_page_in_thread(url)
@@ -279,7 +271,6 @@ def detect_region(url, snippet_text=""):
     # ---------------------------
     return "Unknown / Global"
 
-
 async def get_multi_source_product_pages(product_names):
     final_results = []
     for name in product_names:
@@ -288,7 +279,7 @@ async def get_multi_source_product_pages(product_names):
 
         url = "https://google.serper.dev/search"
         headers = {"X-API-KEY": SERPER_API_KEY, "Content-Type": "application/json"}
-        payload = {"q": query, "num": 5}
+        payload = {"q": query, "num": 10}
         # payload = {"q": query, "num": 5, "gl": "us", "hl": "en"}
 
         try:
@@ -554,8 +545,6 @@ async def summarize_product_info(product_name, product_values, region_info="us")
     except:
         return json.loads(sanitize_json(response.content.strip()))
 
-
-
 def sanitize_json(text: str) -> str:
     text = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
     text = text.replace("```", "")
@@ -564,7 +553,6 @@ def sanitize_json(text: str) -> str:
         text = text[text.index("{"):]
 
     return text.strip()
-
 
 async def normalize_info(prod_detail):
     normalize_prompt = """
