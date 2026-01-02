@@ -11,6 +11,7 @@ class DiscoveryState(dict):
     user_id: str = ""
     file_path: str = ""
     filename: str = ""
+    region: str = ""
 
 def send_to_client(state):
     client_id = state["user_id"]

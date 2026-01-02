@@ -36,10 +36,16 @@ async def discovery_step(state):
             raise ValueError("Unsupported file format")
 
         # --- Extract product titles ---
+        # product_titles = [
+        #     row["Title"]
+        #     for row in file_info.to_dict(orient="records")
+        #     if pd.notna(row.get("Title", "") and row.get("Title", "").strip() != "")
+        # ]
+
         product_titles = [
-            row["Title"]
+            row["Product name in PI"]
             for row in file_info.to_dict(orient="records")
-            if pd.notna(row.get("Title", "") and row.get("Title", "").strip() != "")
+            if pd.notna(row.get("Product name in PI", "") and row.get("Product name in PI", "").strip() != "")
         ]
 
         # --- Scrape data ---

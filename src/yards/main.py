@@ -46,6 +46,7 @@ async def discovery_endpoint(file: UploadFile = File(...)):
         state['user_id'] = client_id
         state['file_path'] = file_path
         state['filename'] = filename
+        state['region'] = ""
 
         config={"configurable":{"thread_id":client_id}}
         

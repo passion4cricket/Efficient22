@@ -271,7 +271,7 @@ def detect_region(url, snippet_text=""):
     # ---------------------------
     return "Unknown / Global"
 
-async def get_multi_source_product_pages(product_names):
+async def get_multi_source_product_pages(product_names, region="us"):
     final_results = []
     for name in product_names:
         query = f"{name}"
