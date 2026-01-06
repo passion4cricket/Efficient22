@@ -69,91 +69,131 @@ async def discovery_step(state):
         for product_detail in scraper_response:
 
             user_prompt = f"""
-                Convert the following product data into a Shopify CSV-compatible JSON array.
+               You are an expert Shopify product data builder and eCommerce SEO specialist.
 
-                RULES (STRICT):
-                1. Output ONLY a valid JSON array. No text, markdown, comments, or explanations.
-                2. Each array item MUST represent exactly ONE variant.
-                3. Each object MUST contain ALL Shopify CSV headers EXACTLY as listed. No extra keys.
-                4. Use ONLY flat string values. If a field is missing, use "".
-                5. Wrap all keys and string values in double quotes.
-                6. FINAL output MUST parse with json.loads() without corrections.
-                7. Vendor MUST be the product's brand value. If brand is missing, use "".
-                8. Any Option Name field MUST be "" if its corresponding Option Value is "".
+                Strict output rule:
+                - Return pure JSON only.
+                - The output must begin with [ and end with ].
+                - Do not include explanations, labels, markdown, or commentary.
+                - Use empty strings ("") for missing text values.
+                - Use empty arrays ([]) for missing list values.
+                - Escape all double quotes (") as \".
+                - Remove all newline characters inside "Body (HTML)".
 
+                --------------------------------------------------
+                CRITICAL OPTION ENFORCEMENT (HIGHEST PRIORITY)
+                --------------------------------------------------
+                - Option Names MUST ONLY appear if their corresponding Option Value is NON-EMPTY.
+                - If an Option Value is "", the Option Name MUST also be "".
+                - It is STRICTLY FORBIDDEN to return:
+                • "Option2 Name": "Color" with "Option2 Value": ""
+                • "Option3 Name": "Material" with "Option3 Value": ""
+                - If ANY Option Name exists with an empty Option Value → DROP THE ENTIRE OBJECT.
+                - Invalid objects MUST NOT be included in the output array.
 
-                VARIANT RULES:
-                - Variants MUST be created ONLY based on these attributes:
-                    • Color
-                    • Size
-                    • Material
-                - Do NOT generate variants based on image count, image URLs, price differences, or stock.
-                - If the product contains multiple values for any of the above (Color, Size, Material), generate variant combinations.
-                - If the product has none of these variant attributes, generate ONLY ONE variant.
-                - Option1 Name MUST be "Size" if size exists; otherwise use the next available attribute.
-                - Option2 Name MUST be "Color" if color exists.
-                - Option3 Name MUST be "Material" if material exists.
-                - Option values MUST contain only clean text (e.g., "Size 3" → "3", "Red Color" → "Red").
-                - Do NOT create a variant per image.
-                - Images must be duplicated across variants:
-                    • Repeat the same variant record for each image
-                    • Change ONLY:
-                        - "Image Src"
-                        - "Image Position"
-                        - "Image Alt Text"
-                - Generate "Handle" from Title: lowercase, alphanumeric + hyphens, spaces → hyphens.
-                - Wrap product description in "<p>...</p>".
-                - "Image Src" must be absolute URLs.
-                - Assign "Image Position" sequentially for multiple images.
+                --------------------------------------------------
+                VARIANT CREATION RULES
+                --------------------------------------------------
+                - Variants may ONLY be created using:
+                • Size
+                • Color
+                • Material
+                - DO NOT create variants from:
+                • price
+                • SKU
+                • inventory
+                • images
+                - If NONE of Size, Color, Material exist → create EXACTLY ONE variant.
+                - If ONLY Size exists → ONLY Option1 is allowed.
+                - Option positions MUST NEVER SHIFT.
 
-                OPTION OUTPUT RULES (STRICT):
-                - If an option does NOT have a value, the corresponding Option Name MUST be an empty string ("").
-                - NEVER output an Option Name if its Option Value is empty.
-                - Option Name and Option Value must ALWAYS appear as a valid pair.
-                - Valid pairs are ONLY:
-                • ("Option1 Name", "Option1 Value")
-                • ("Option2 Name", "Option2 Value")
-                • ("Option3 Name", "Option3 Value")
-                - If "Option1 Value" is "", then "Option1 Name" MUST be "".
-                - If "Option2 Value" is "", then "Option2 Name" MUST be "".
-                - If "Option3 Value" is "", then "Option3 Name" MUST be "".
-                - It is STRICTLY FORBIDDEN to output an Option Name without a non-empty Option Value.
-                - Do NOT shift option positions to fill gaps (Option2 must not become Option1).
+                --------------------------------------------------
+                OPTION POSITION RULES (FIXED & STRICT)
+                --------------------------------------------------
+                - Option1 Name = "Size" ONLY if Size exists.
+                - Option2 Name = "Color" ONLY if Color exists.
+                - Option3 Name = "Material" ONLY if Material exists.
+                - DO NOT output placeholder or inferred options.
+                - Clean option values only:
+                • "Harrow Size" → "Harrow"
+                • "LB Size" → "LB"
+                • "Red Color" → "Red"
 
+                --------------------------------------------------
+                TITLE & HANDLE RULES (VERY IMPORTANT)
+                --------------------------------------------------
+                - Title MUST be:
+                • Proper case
+                • Human-readable
+                • Brand + Product Name
+                • NO hyphens
+                • NO lowercase-only formatting
+                - Handle MUST be generated FROM Title using:
+                • lowercase
+                • spaces → hyphens
+                • alphanumeric + hyphens only
+                - Title MUST NEVER resemble a handle.
+                - Handle MUST NEVER be reused as Title.
 
-                SEO RULES:
-                - If missing, generate intelligently:
-                - "SEO Title": short and keyword-rich
-                - "SEO Description": one sentence highlighting purpose/benefit
-                - "Image Alt Text": descriptive and SEO friendly
-                - "Tags": comma-separated keywords
-                - Google Shopping fields: infer if possible, else ""
-                - "Condition" defaults to "new"
+                --------------------------------------------------
+                PRODUCT DESCRIPTION RULES
+                --------------------------------------------------
+                - "Body (HTML)" MUST:
+                • be wrapped in <p>...</p>
+                • contain NO newline characters
+                - Preserve original marketing content.
 
-                FINAL VALIDATION:
-                - If ANY Option Name has no corresponding non-empty Option Value, the entire object is INVALID.
-                - INVALID objects must NOT be included in the output array.
+                --------------------------------------------------
+                IMAGE RULES
+                --------------------------------------------------
+                - Do NOT create variants per image.
+                - Duplicate variant rows per image:
+                • Change ONLY Image Src, Image Position, Image Alt Text
+                - Image Src MUST be a valid absolute URL.
+                - Image Position starts from 1.
 
+                --------------------------------------------------
+                SEO RULES
+                --------------------------------------------------
+                Generate ONLY if missing:
+                - SEO Title (short, keyword-rich)
+                - SEO Description (single sentence, benefit-driven)
+                - Image Alt Text (descriptive)
+                - Tags (comma-separated)
+                - Condition defaults to "new"
 
+                --------------------------------------------------
+                FINAL VALIDATION (MANDATORY)
+                --------------------------------------------------
+                - If ANY rule is violated → DROP the object.
+                - Output MUST be valid JSON and parse with json.loads().
+                - Output MUST contain NOTHING except the JSON array.
+
+                --------------------------------------------------
                 SHOPIFY HEADERS:
                 {", ".join(SHOPIFY_HEADERS)}
 
+                --------------------------------------------------
                 Input product data:
                 {product_detail}
+
+
 
             """
 
             sys_prompt = """
                 You are an expert Shopify product data builder and eCommerce SEO specialist.
 
-                Strict output rule:
-                - Return **pure JSON only**.
-                - The output must **begin with `[` and end with `]`**.
-                - Do **not** include any explanations, text, labels, or markdown.
-                - Do **not** prefix with lines like “Here is the processed JSON array:” or “Output:”.
+                Strict output rules:
+                - Return PURE JSON only.
+                - The output MUST begin with "[" and end with "]".
+                - Do NOT include explanations, text, labels, or markdown.
+                - Do NOT prefix with lines like “Here is the processed JSON array:” or “Output:”.
                 - Use empty strings ("") for missing text values and empty arrays ([]) for missing list values.
-                - Remove all newline characters inside the "Body (HTML)".
-                - Escape all double quotes (") as ".
+                - "Body (HTML)" must not contain newline characters (\n), but must preserve valid HTML tags.
+                - Escape double quotes ONLY when they appear INSIDE string values.
+                - The final output MUST parse successfully using json.loads().
+
             """
 
 

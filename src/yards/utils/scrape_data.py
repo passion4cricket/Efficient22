@@ -333,7 +333,7 @@ async def summarize_product_info(product_name, product_values, region_info="us")
     prod_images = []
     prod_brand = []
 
-    print(product_values)
+    # print(f"After normalize: {product_values}")
 
     # Flatten incoming product data
     for p in product_values:
@@ -426,7 +426,7 @@ async def summarize_product_info(product_name, product_values, region_info="us")
         8. Official SKU Selection:
         ***OFFICIAL SKU MUST BE SELECTED ONLY FROM VARIANTS THAT PASSED REGION-BASED CURRENCY FILTERING.***
 
-        Valid conditions:
+        Valid conditions for SKU Selection:
         - Must come from an official source URL.
         - Prefer manufacturer-style patterns (e.g., SG****).
         - Prefer structured SKUs (4–12 alphanumeric characters).
@@ -540,7 +540,7 @@ async def summarize_product_info(product_name, product_values, region_info="us")
     )
 
     try:
-        print(response.content.strip())
+        # print(f"After summerization: {response.content.strip()}")
         return json.loads(response.content.strip())
     except:
         return json.loads(sanitize_json(response.content.strip()))
@@ -555,6 +555,8 @@ def sanitize_json(text: str) -> str:
     return text.strip()
 
 async def normalize_info(prod_detail):
+
+    # print(f"After webscrapping: {prod_detail}")
     normalize_prompt = """
         You are a JSON-only generator.
 
@@ -612,12 +614,19 @@ async def normalize_info(prod_detail):
     """
 
     try:
-        extractor_response = await run_local_llm(
+        # extractor_response = await run_local_llm(
+        #     normalize_prompt,
+        #     user_prompt,
+        # )
+
+        extractor_response = await call_llm(
+            llm,
+            prompt,
             normalize_prompt,
             user_prompt,
         )
 
-        details = extractor_response.strip()
+        details = extractor_response.content.strip()
         # print(f"Narmalize: {details}")
         
         try:
@@ -638,155 +647,3 @@ def sanitize_json_online_llm(text: str) -> str:
         if start != -1:
             text = text[start:]
     return text
-
-
-# def extract_inr_prices(text):
-#     prices = re.findall(r'(?:₹|INR\s*|Rs\.?\s*)(\d{2,6}(?:\.\d{1,2})?)', text, re.IGNORECASE)
-#     return [float(p.replace(",", "")) for p in prices if p]
-
-# def extract_inr_prices(data):
-#     prices = []
-#     try:
-#         for item in data:
-#             # print(type(item), item["json-ld"])
-#             if item["json-ld"]:
-#                 for entry in item.get("json-ld", []):
-#                     offers = entry.get("offers", [])
-#                     if isinstance(offers, list):
-#                         for offer in offers:
-#                             price = offer.get("lowPrice") or offer.get("highPrice") or offer.get("price")
-#                             if price is not None:
-#                                 prices.append(float(price))
-#                     else:
-#                         price = offer.get("lowPrice") or offer.get("highPrice") or offer.get("price")
-#                         if price is not None:
-#                             prices.append(float(price))
-
-#         if prices:
-#             min_price = min(prices)
-#             max_price = max(prices)
-#             print(f"Min Price: {min_price}")
-#             print(f"Max Price: {max_price}")
-#         else:
-#             print("No prices found.")
-#         print(prices)
-#     except Exception as e:
-#         print(f"Extraction INR price faild. {e}")
-
-#     return prices
-
-
-# def chunk_text(text, max_length=MAX_TOKENS_PER_REQUEST):
-#     chunks, current = [], ""
-#     for line in text.splitlines():
-#         if len(current) + len(line) > max_length:
-#             chunks.append(current)
-#             current = line
-#         else:
-#             current += line
-#     if current:
-#         chunks.append(current)
-#     return chunks
-
-
-# def extract_variant_prices(product_values):
-#     variant_price_map = {}
-#     for site_data in product_values:
-#         if not site_data:
-#             continue
-#         text = json.dumps(site_data)
-#         variant_matches = re.findall(
-#             r'(?:Size|Variant|Option)\s*[:\-]?\s*([A-Za-z0-9]+)[^₹RsINR]*(?:₹|Rs|INR\.?\s?)(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)',
-#             text, re.IGNORECASE
-#         )
-#         for variant, price in variant_matches:
-#             price_val = float(price.replace(",", ""))
-#             variant_price_map.setdefault(variant.strip(), []).append(price_val)
-
-#     summary = {}
-#     for variant, prices in variant_price_map.items():
-#         summary[variant] = {
-#             "Min": min(prices),
-#             "Max": max(prices),
-#             "Avg": round(sum(prices) / len(prices), 2),
-#             "Count": len(prices)
-#         }
-#     return summary
-
-
-###### ONLINE LLM NORMALIZATION ######
-
-# async def normalize_info(prod_detail):
-#     normalize_prompt = """
-#         You are an expert e-commerce data normalizer.
-
-#         Your job is to take raw web-scraped data of a product (possibly messy or inconsistent)
-#         and convert it into a standardized JSON format.
-
-#         ### Target JSON Schema
-#         {
-#         "title": "",
-#         "brand": "",
-#         "description": "",
-#         "price": {
-#             "value": 0.0,
-#             "currency": ""
-#         },
-#         "sku": "",
-#         "category": "",
-#         "images": [],
-#         "variants": [],
-#         "attributes": {
-#             "Color": "",
-#             "Size": ""
-#         }
-#         }
-
-#         ### Rules
-#         - If the input has multiple price formats, extract the most accurate one.
-#         - Always return valid JSON, matching the schema.
-#         - Use best guesses for missing fields, but never invent unrealistic data.
-#         - For images, return only clean, full URLs.
-
-#         ### OUTPUT
-#         A single JSON object matching the target schema.
-#         Return only a **valid JSON** (no Markdown, no commentary, no explanation).
-#     """
-
-#     clean_input = json.dumps(prod_detail, ensure_ascii=False, indent=2)
-
-#     user_prompt = f"""
-#         ### INPUT
-#         {clean_input}
-#     """
-
-#     extractor_response = await call_llm(
-#         llm,
-#         prompt,
-#         normalize_prompt,
-#         user_prompt,
-#     )
-
-#     details = extractor_response.content.strip()
-
-    
-#     # Try to parse the LLM response as JSON. If parsing fails, try a light sanitize
-#     try:
-#         parsed = json.loads(details)
-#     except Exception:
-#         try:
-#             parsed = json.loads(sanitize_json(details))
-#         except Exception:
-#             # Fall back to returning the raw string if we can't parse
-#             parsed = details
-
-#     return parsed
-
-# def sanitize_json(text: str) -> str:
-#     text = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', text)
-#     text = re.sub(r',\s*([}\]])', r'\1', text)
-#     if not text.startswith("[") and not text.startswith("{"):
-#         start = text.find("[")
-#         if start != -1:
-#             text = text[start:]
-#     return text
