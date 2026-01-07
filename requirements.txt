@@ -24,3 +24,4 @@ extruct
 rapidfuzz
 tldextract
 python-multipart
+openpyxl
