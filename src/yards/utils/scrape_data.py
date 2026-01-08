@@ -14,11 +14,9 @@ from sklearn.metrics.pairwise import cosine_similarity
 from yards.utils.utils import llm_init, call_llm, run_local_llm
 from dotenv import load_dotenv
 import tldextract
+import config
 
-# ----------------------------------------------------------
-# ENV + INIT
-# ----------------------------------------------------------
-load_dotenv()
+load_dotenv(config.get_env_path())
 SERPER_API_KEY = os.getenv("SERPER_API_KEY")
 llm, prompt = llm_init()
 

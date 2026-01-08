@@ -20,3 +20,13 @@ SHOPIFY_HEADERS = [
     "Compare At Price / United States","Included / International","Price / International",
     "Compare At Price / International","Status"
 ]
+
+_ENV_PATH = ""
+
+def set_env_path(path: str):
+    global _ENV_PATH
+    _ENV_PATH = path
+
+def get_env_path() -> str:
+    return _ENV_PATH
+

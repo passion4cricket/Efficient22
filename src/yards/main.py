@@ -5,11 +5,26 @@ from pathlib import Path
 import sys, os
 import uvicorn
 from datetime import datetime
+import config
 # from yards.main import app
+
+# if getattr(sys, "frozen", False):
+#     base_path = Path(sys._MEIPASS) / "yards"
+# else:
+#     base_path = Path(__file__).resolve().parent.parent
+
+# sys.path.insert(0, str(base_path))
 
 if getattr(sys, "frozen", False):
     base_path = Path(sys._MEIPASS) / "yards"
+    mf2py_data = Path(sys._MEIPASS) / "mf2py" / "backcompat-rules"
+    os.environ["MF2PY_BACKCOMPAT_PATH"] = str(mf2py_data)
+    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(
+        Path(sys._MEIPASS) / "ms-playwright"
+    )
+    config.set_env_path(Path(sys._MEIPASS) / '.env')
 else:
+    config.set_env_path('.env')
     base_path = Path(__file__).resolve().parent.parent
 
 sys.path.insert(0, str(base_path))

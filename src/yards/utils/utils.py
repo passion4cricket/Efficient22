@@ -7,10 +7,11 @@ from dotenv import load_dotenv
 import ollama
 import yfinance as yf
 import asyncio
+import config
 
 _model = None
 
-load_dotenv()
+load_dotenv(config.get_env_path())
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 def get_base_dir():
