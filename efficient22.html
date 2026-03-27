@@ -3,6 +3,7 @@
 
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sportiventor</title>
     <style>
         * {
@@ -26,6 +27,8 @@
             display: flex;
             justify-content: center;
             align-items: center;
+            z-index: 100;
+            position: relative;
         }
 
         .header_text {
@@ -73,7 +76,7 @@
         .logo-icon {
             width: 32px;
             height: 32px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #2563eb 0%, #764ba2 100%);
             border-radius: 8px;
             display: flex;
             align-items: center;
@@ -139,37 +142,7 @@
             letter-spacing: 0.5px;
         }
 
-        .sidebar-nav {
-            display: flex;
-            flex-direction: column;
-            gap: 2px;
-        }
-
-        .nav-item {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 10px 12px;
-            border-radius: 8px;
-            background: transparent;
-            border: none;
-            color: #9ca3af;
-            cursor: pointer;
-            transition: all 0.2s;
-            font-size: 14px;
-            text-align: left;
-        }
-
-        .nav-item:hover {
-            background: #2a2a2a;
-            color: #e0e0e0;
-        }
-
-        .nav-item svg {
-            width: 18px;
-            height: 18px;
-            flex-shrink: 0;
-        }
+        /* Navigation Removed per request */
 
         .history-list {
             flex: 1;
@@ -223,6 +196,7 @@
             display: flex;
         }
 
+        /* Main Container */
         .main-container {
             display: flex;
             flex-direction: column;
@@ -240,7 +214,6 @@
             flex-direction: column;
             gap: 16px;
             padding: 20px 0;
-            margin-bottom: 20px;
         }
 
         .msg {
@@ -316,104 +289,7 @@
             }
         }
 
-        /* Data panel on the right */
-        .data-panel {
-            width: 400px;
-            background: #2a2a2a;
-            border-left: 1px solid #3a3a3a;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-        }
-
-        .data-panel-header {
-            padding: 16px;
-            border-bottom: 1px solid #3a3a3a;
-            text-align: center;
-        }
-
-        .data-panel-header h3 {
-            font-size: 16px;
-            color: #e0e0e0;
-            margin-bottom: 8px;
-            text-align: center;
-        }
-
-        .data-panel-subtitle {
-            font-size: 13px;
-            color: #6b7280;
-        }
-
-        .data-panel-content {
-            flex: 1;
-            overflow-y: auto;
-            padding: 16px;
-        }
-
-        .data-section {
-            margin-bottom: 24px;
-        }
-
-        .data-section-title {
-            font-size: 13px;
-            font-weight: 600;
-            color: #9ca3af;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            margin-bottom: 12px;
-        }
-
-        .data-item {
-            background: #1a1a1a;
-            border: 1px solid #3a3a3a;
-            border-radius: 8px;
-            padding: 12px;
-            margin-bottom: 8px;
-        }
-
-        .data-item-label {
-            font-size: 12px;
-            color: #6b7280;
-            margin-bottom: 4px;
-        }
-
-        .data-item-value {
-            font-size: 15px;
-            color: #e0e0e0;
-            font-weight: 500;
-        }
-
-        .data-list {
-            list-style: none;
-        }
-
-        .data-list li {
-            padding: 8px 12px;
-            background: #1a1a1a;
-            border: 1px solid #3a3a3a;
-            border-radius: 6px;
-            margin-bottom: 6px;
-            font-size: 13px;
-            color: #e0e0e0;
-        }
-
-        .empty-state {
-            text-align: center;
-            padding: 40px 20px;
-            color: #6b7280;
-        }
-
-        .empty-state svg {
-            width: 48px;
-            height: 48px;
-            margin: 0 auto 12px;
-            opacity: 0.5;
-        }
-
-        .empty-state p {
-            font-size: 14px;
-        }
-
+        /* Input Area */
         .chat-input-container {
             background: #2a2a2a;
             border-radius: 16px;
@@ -423,12 +299,14 @@
             gap: 8px;
             border: 1px solid #3a3a3a;
             position: relative;
+            margin-top: 10px;
         }
 
         .input-left-actions {
             display: flex;
             gap: 4px;
             align-items: center;
+            position: relative;
         }
 
         .icon-btn {
@@ -456,6 +334,52 @@
             height: 18px;
         }
 
+        .plus-menu {
+            position: absolute;
+            bottom: 55px;
+            left: 0;
+            background: #2a2a2a;
+            border: 1px solid #3a3a3a;
+            border-radius: 12px;
+            padding: 8px;
+            display: none;
+            flex-direction: column;
+            gap: 4px;
+            min-width: 200px;
+            z-index: 1000;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+        }
+
+        .plus-menu.active {
+            display: flex;
+        }
+
+        .menu-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 12px;
+            border-radius: 8px;
+            background: transparent;
+            border: none;
+            color: #e0e0e0;
+            cursor: pointer;
+            transition: 0.2s;
+            width: 100%;
+            font-size: 14px;
+            text-align: left;
+        }
+
+        .menu-item:hover {
+            background: #3a3a3a;
+        }
+
+        .menu-item svg {
+            width: 20px;
+            height: 20px;
+            flex-shrink: 0;
+        }
+
         .chat-input {
             flex: 1;
             background: transparent;
@@ -463,6 +387,7 @@
             color: #e0e0e0;
             font-size: 15px;
             outline: none;
+            padding: 8px;
         }
 
         .chat-input::placeholder {
@@ -514,7 +439,7 @@
             display: none;
             flex-direction: column;
             gap: 2px;
-            min-width: 150px;
+            min-width: 100px;
             z-index: 100;
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
         }
@@ -536,6 +461,7 @@
             transition: all 0.2s;
             font-size: 13px;
             text-align: left;
+            width: 100%;
         }
 
         .country-option:hover {
@@ -574,34 +500,220 @@
             height: 18px;
         }
 
-        @keyframes fadeIn {
-            from {
-                opacity: 0;
-                transform: translateY(10px);
-            }
-
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
+        /* Data Panel (Right Side) */
+        .data-panel {
+            width: 420px;
+            background: #171717;
+            border-left: 1px solid #2a2a2a;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
         }
 
-        .hidden {
-            display: none;
+        .data-panel-header {
+            padding: 20px;
+            border-bottom: 1px solid #2a2a2a;
+            text-align: center;
         }
 
-        /* File upload modal */
+        .data-panel-header h3 {
+            font-size: 18px;
+            margin-bottom: 4px;
+        }
+
+        .data-panel-subtitle {
+            font-size: 12px;
+            color: #6b7280;
+        }
+
+        .data-panel-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: #6b7280;
+        }
+
+        .empty-state svg {
+            width: 48px;
+            height: 48px;
+            margin: 0 auto 12px;
+            opacity: 0.5;
+        }
+
+        .empty-state p {
+            font-size: 14px;
+        }
+
+        /* AI Insight Specific Styles */
+        .brief-section {
+            margin-bottom: 24px;
+        }
+
+        .ai-insights-header {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 8px;
+            margin-bottom: 16px;
+            padding: 12px;
+            background: #2a2a2a;
+            border-radius: 8px;
+            border: 1px solid #3a3a3a;
+        }
+
+        .ai-label {
+            font-size: 10px;
+            color: #6b7280;
+            text-transform: uppercase;
+            display: block;
+        }
+
+        .ai-value {
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .ai-quality-badge {
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: bold;
+        }
+
+        .quality-excellent {
+            background: #10b981;
+            color: white;
+        }
+
+        .quality-good {
+            background: #2563eb;
+            color: white;
+        }
+
+        .quality-fair {
+            background: #f59e0b;
+            color: white;
+        }
+
+        .brief-stat-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .brief-stat-card {
+            background: #1a1a1a;
+            border: 1px solid #3a3a3a;
+            padding: 12px;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .brief-stat-value {
+            font-size: 20px;
+            font-weight: bold;
+            color: #2563eb;
+        }
+
+        .brief-stat-label {
+            font-size: 11px;
+            color: #6b7280;
+        }
+
+        .brief-subsection {
+            margin-top: 16px;
+        }
+
+        .brief-subsection-title {
+            font-size: 12px;
+            font-weight: bold;
+            color: #9ca3af;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+        }
+
+        .ai-purpose-text {
+            background: #1e293b;
+            border-left: 3px solid #2563eb;
+            padding: 10px;
+            border-radius: 4px;
+            font-size: 13px;
+            line-height: 1.4;
+        }
+
+        .ai-insight-item {
+            display: flex;
+            gap: 8px;
+            font-size: 13px;
+            margin-bottom: 6px;
+            padding: 8px;
+            background: #1a1a1a;
+            border-radius: 6px;
+        }
+
+        .brief-tag {
+            display: inline-block;
+            padding: 4px 8px;
+            background: #2a2a2a;
+            border: 1px solid #3a3a3a;
+            border-radius: 4px;
+            font-size: 11px;
+            margin: 2px;
+        }
+
+        /* Product Cards */
+        .product-card {
+            background: #1a1a1a;
+            border: 1px solid #3a3a3a;
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 12px;
+        }
+
+        .product-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .variant-count {
+            background: #2563eb;
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 10px;
+        }
+
+        .download-btn {
+            width: 100%;
+            padding: 14px;
+            background: #2563eb;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-weight: bold;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+
+        .download-btn:hover {
+            background: #1e40af;
+        }
+
+        /* Modal */
         .upload-modal {
             position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(0, 0, 0, 0.7);
+            inset: 0;
+            background: rgba(0, 0, 0, 0.8);
             display: none;
             align-items: center;
             justify-content: center;
-            z-index: 1000;
+            z-index: 2000;
         }
 
         .upload-modal.active {
@@ -755,50 +867,37 @@
             color: #e0e0e0;
         }
 
-        /* Plus button menu */
-        .plus-menu {
-            position: absolute;
-            bottom: 60px;
-            left: 12px;
-            background: #2a2a2a;
-            border: 1px solid #3a3a3a;
-            border-radius: 12px;
-            padding: 8px;
-            display: none;
-            flex-direction: column;
-            gap: 4px;
-            min-width: 200px;
-            z-index: 100;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        /* Loading Spinner */
+        .loading-spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid #3a3a3a;
+            border-top: 3px solid #2563eb;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
         }
 
-        .plus-menu.active {
-            display: flex;
+        @keyframes spin {
+            100% {
+                transform: rotate(360deg);
+            }
         }
 
-        .menu-item {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            padding: 10px 12px;
-            border-radius: 8px;
-            background: transparent;
-            border: none;
-            color: #e0e0e0;
-            cursor: pointer;
-            transition: all 0.2s;
-            font-size: 14px;
-            text-align: left;
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
 
-        .menu-item:hover {
-            background: #3a3a3a;
-        }
-
-        .menu-item svg {
-            width: 20px;
-            height: 20px;
-            flex-shrink: 0;
+        .hidden {
+            display: none !important;
         }
     </style>
 </head>
@@ -809,7 +908,6 @@
     </div>
 
     <div class="app-container">
-        <!-- Sidebar -->
         <div class="sidebar" id="sidebar">
             <div class="sidebar-header">
                 <div class="sidebar-top-actions">
@@ -834,7 +932,6 @@
             </div>
 
             <div class="history-list" id="historyList">
-                <!-- Chat history will be dynamically added here -->
             </div>
         </div>
 
@@ -844,52 +941,50 @@
             </svg>
         </button>
 
-        <div class="main-container">
-            <div class="chat-messages" id="chatMessages"></div>
+        <div class="main-container" id="mainContainer">
+            <div class="chat-messages" id="chatMessages">
+            </div>
 
             <div class="chat-input-container">
                 <div class="input-left-actions">
-                    <button class="icon-btn" onclick="togglePlusMenu()" title="Options" id="plusBtn">
+                    <button class="icon-btn" id="plusBtn" title="More options">
                         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5"
-                                d="M12 4v16m8-8H4" />
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
                         </svg>
                     </button>
+
+                    <div class="plus-menu" id="plusMenu">
+                        <button class="menu-item" onclick="openUploadModal(); closePlusMenu();">
+                            Upload CSV / Excel File
+                        </button>
+                    </div>
                 </div>
 
-                <!-- Plus button menu -->
-                <div class="plus-menu" id="plusMenu">
-                    <button class="menu-item" onclick="openUploadModal(); closePlusMenu();">
-                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-                        </svg>
-                        Upload a file
-                    </button>
-                </div>
-
-                <input type="text" class="chat-input" id="messageInput" placeholder="Ask anything...">
+                <input type="text" class="chat-input" id="chatInput" placeholder="Type your message..." />
 
                 <div class="input-right-actions">
-                    <div class="country-selector" onclick="toggleCountryDropdown()" id="countrySelector">
-                        <span class="country-flag" id="selectedFlag">🇮🇳</span>
-                        <span id="selectedCountry">India</span>
-                        <svg width="12" height="12" fill="currentColor" viewBox="0 0 24 24">
-                            <path d="M7 10l5 5 5-5z" />
+                    <div class="country-selector" id="countrySelector" title="Select Country">
+                        <div class="country-flag" id="selectedFlag">🇺🇸</div>
+                        <span id="selectedLanguage">United States</span>
+                        <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
                         </svg>
 
-                        <div class="country-dropdown" id="countryDropdown" onclick="event.stopPropagation()">
-                            <button class="country-option selected" onclick="selectCountry('India', '🇮🇳')">
-                                <span class="country-flag">🇮🇳</span>
-                                <span>India</span>
+                        <div class="country-dropdown" id="countryDropdown">
+                            <button class="country-option selected" data-lang="us" data-flag="🇺🇸"
+                                onclick="selectLanguage(this)">
+                                <div class="country-flag">🇺🇸</div>
+                                United States
                             </button>
-                            <button class="country-option" onclick="selectCountry('United States', '🇺🇸')">
-                                <span class="country-flag">🇺🇸</span>
-                                <span>United States</span>
+                            <button class="country-option" data-lang="in" data-flag="🇮🇳"
+                                onclick="selectLanguage(this)">
+                                <div class="country-flag">🇮🇳</div>
+                                India
                             </button>
                         </div>
                     </div>
-                    <button class="send-btn" onclick="sendMessage()" id="sendBtn">
+
+                    <button class="send-btn" id="sendBtn" onclick="sendMessage()">
                         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                                 d="M5 10l7-7m0 0l7 7m-7-7v18" />
@@ -899,11 +994,10 @@
             </div>
         </div>
 
-        <!-- Data Panel -->
         <div class="data-panel" id="dataPanel">
             <div class="data-panel-header">
                 <h3>Data Overview</h3>
-                <p class="data-panel-subtitle">File analysis details</p>
+                <p class="data-panel-subtitle">Insights & Shopify Preview</p>
             </div>
             <div class="data-panel-content" id="dataPanelContent">
                 <div class="empty-state">
@@ -911,13 +1005,12 @@
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                             d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                     </svg>
-                    <p>Upload a file to see data insights</p>
+                    <p>Upload a file to start AI analysis</p>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Upload Modal -->
     <div class="upload-modal" id="uploadModal">
         <div class="upload-modal-content">
             <div class="upload-modal-header">
@@ -937,9 +1030,8 @@
                 </svg>
                 <p>Drag and drop files here</p>
                 <p><span class="browse-link">or browse from your computer</span></p>
-                <input type="file" id="fileInput" class="hidden"
-                    accept=".csv,.jpg,.jpeg,.png,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    multiple onchange="handleFileUpload()">
+                <input type="file" id="fileInput" class="hidden" accept=".csv,.jpg,.jpeg,.png,.xlsx,.xls" multiple
+                    onchange="handleFileUpload()">
             </div>
 
             <div class="file-list" id="fileList"></div>
@@ -947,98 +1039,116 @@
     </div>
 
     <script>
+        /* APP LOGIC - Complete Implementation */
         const chatMessages = document.getElementById("chatMessages");
-        const uploadedFiles = [];
-        let selectedCountryName = "India";
-        let isAnalyzing = false;
-        let chatHistory = [];
+        const dataPanelContent = document.getElementById("dataPanelContent");
+        const API_BASE_URL = "http://127.0.0.1:8000";
+        let currentClientId = null;
+        let pollingInterval = null;
+        let uploadedFiles = [];
+        let selectedLanguage = "US"; // Default to US
 
-        // Initial greeting
+        // Startup
+        window.onload = () => {
+            showInitialGreeting();
+        };
+
         function showInitialGreeting() {
-            let time = new Date();
-            let greeting = "Good " + (time.getHours() < 12 ? "Morning" : time.getHours() < 18 ? "Afternoon" : "Evening");
-            addMessage(`${greeting}, Provide me with the Data File.`, "agent");
+            const time = new Date();
+            const hour = time.getHours();
+            let greeting = "Good ";
+            if (hour < 12) greeting += "Morning";
+            else if (hour < 18) greeting += "Afternoon";
+            else greeting += "Evening";
+
+            addMessage(`${greeting}! I'm your AI-powered data assistant. Upload any CSV or Excel file and I'll intelligently analyze it, then convert it to Shopify-ready format with smart insights and optimizations.`, "agent");
         }
 
-        showInitialGreeting();
-
-        // Sidebar toggle
+        // UI Interactions
         function toggleSidebar() {
-            const sidebar = document.getElementById('sidebar');
-            sidebar.classList.toggle('minimized');
+            document.getElementById('sidebar').classList.toggle('minimized');
         }
 
-        // Plus menu toggle
-        function togglePlusMenu() {
-            const menu = document.getElementById('plusMenu');
-            menu.classList.toggle('active');
-        }
+        // Plus Menu
+        const plusBtn = document.getElementById('plusBtn');
+        const plusMenu = document.getElementById('plusMenu');
 
-        // Close plus menu when clicking outside
-        document.addEventListener('click', function (event) {
-            const plusMenu = document.getElementById('plusMenu');
-            const plusBtn = document.getElementById('plusBtn');
-            if (!plusMenu.contains(event.target) && !plusBtn.contains(event.target)) {
+        plusBtn.onclick = (e) => {
+            e.stopPropagation();
+            plusMenu.classList.toggle('active');
+        };
+
+        document.addEventListener('click', (e) => {
+            if (!plusMenu.contains(e.target) && !plusBtn.contains(e.target)) {
                 plusMenu.classList.remove('active');
             }
         });
 
-        // Country dropdown toggle
-        function toggleCountryDropdown() {
-            const dropdown = document.getElementById('countryDropdown');
-            dropdown.classList.toggle('active');
-        }
-
-        // Select country
-        function selectCountry(countryName, flag) {
-            selectedCountryName = countryName;
-            document.getElementById('selectedCountry').textContent = countryName;
-            document.getElementById('selectedFlag').textContent = flag;
-            document.getElementById('countryDropdown').classList.remove('active');
-
-            const options = document.querySelectorAll('.country-option');
-            options.forEach(opt => opt.classList.remove('selected'));
-            event.target.closest('.country-option').classList.add('selected');
-        }
-
-        // Close plus menu
         function closePlusMenu() {
-            document.getElementById('plusMenu').classList.remove('active');
+            plusMenu.classList.remove('active');
         }
 
-        // Add message to chat
+        // Country/Language Selector
+        const countrySelector = document.getElementById('countrySelector');
+        const countryDropdown = document.getElementById('countryDropdown');
+
+        countrySelector.onclick = (e) => {
+            e.stopPropagation();
+            countryDropdown.classList.toggle('active');
+        };
+
+        document.addEventListener('click', (e) => {
+            if (!countrySelector.contains(e.target)) {
+                countryDropdown.classList.remove('active');
+            }
+        });
+
+        function selectLanguage(button) {
+            const flag = button.getAttribute('data-flag');
+            const lang = button.textContent.trim();
+
+            document.getElementById('selectedFlag').textContent = flag;
+            document.getElementById('selectedLanguage').textContent = lang;
+            selectedLanguage = lang;
+
+            // Update selected state
+            document.querySelectorAll('.country-option').forEach(opt => {
+                opt.classList.remove('selected');
+            });
+            button.classList.add('selected');
+
+            countryDropdown.classList.remove('active');
+        }
+
+        // Modal Functions
+        function openUploadModal() {
+            document.getElementById('uploadModal').classList.add('active');
+        }
+
+        function closeUploadModal() {
+            document.getElementById('uploadModal').classList.remove('active');
+        }
+
+        // Message Functions
         function addMessage(text, sender) {
-            const msgDiv = document.createElement('div');
-            msgDiv.className = `msg ${sender}`;
+            const div = document.createElement('div');
+            div.className = `msg ${sender}`;
 
             if (sender === 'agent') {
-                msgDiv.innerHTML = `
-                            <div class="msg-content">${escapeHtml(text)}</div>
-                        `;
+                const content = document.createElement('div');
+                content.className = 'msg-content';
+                content.textContent = text;
+                div.appendChild(content);
             } else {
-                msgDiv.textContent = text;
+                div.textContent = text;
             }
 
-            chatMessages.appendChild(msgDiv);
+            chatMessages.appendChild(div);
             chatMessages.scrollTop = chatMessages.scrollHeight;
-            chatHistory.push({ text, sender });
         }
 
-        // Escape HTML
-        function escapeHtml(text) {
-            const map = {
-                '&': '&amp;',
-                '<': '&lt;',
-                '>': '&gt;',
-                '"': '&quot;',
-                "'": '&#039;'
-            };
-            return text.replace(/[&<>"']/g, m => map[m]);
-        }
-
-        // Send message
         function sendMessage() {
-            const input = document.getElementById('messageInput');
+            const input = document.getElementById('chatInput');
             const message = input.value.trim();
 
             if (message) {
@@ -1052,65 +1162,381 @@
             }
         }
 
-        // Start new chat
-        function startNewChat() {
-            chatMessages.innerHTML = '';
-            chatHistory = [];
-            showInitialGreeting();
+        function insertTemplate(template) {
+            document.getElementById('chatInput').value = template;
         }
 
-        // Upload modal functions
-        function openUploadModal() {
-            document.getElementById('uploadModal').classList.add('active');
-        }
+        // Enter key to send
+        document.getElementById('chatInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
 
-        function closeUploadModal() {
-            document.getElementById('uploadModal').classList.remove('active');
-        }
-
-        // File upload handling
-        function handleFileUpload() {
+        // File Upload
+        async function handleFileUpload() {
             const fileInput = document.getElementById('fileInput');
             const files = fileInput.files;
 
-            for (let file of files) {
-                uploadedFiles.push(file);
-                addFileToList(file);
+            if (!files || files.length === 0) return;
+
+            const file = files[0];
+            closeUploadModal();
+            addMessage(`📤 Uploading ${file.name}...`, "user");
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                showAnalysisProgress(1, 6, "📤 Uploading and validating file...");
+
+                const response = await fetch(`${API_BASE_URL}/upload`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (data.status === 'success') {
+                    currentClientId = data.client_id;
+
+                    showAnalysisProgress(2, 6, "🔍 Analyzing file structure and data types...");
+                    addMessage("✅ File uploaded successfully! Starting intelligent analysis with AI...", "agent");
+
+                    showAnalysisProgress(3, 6, "🤖 Running AI-powered data analysis...");
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    fetchBrief(currentClientId);
+
+                    showAnalysisProgress(4, 6, "⚙️ Converting data to Shopify format...");
+                    startPolling(currentClientId);
+                } else {
+                    console.error("Backend error:", data.message);
+                    // Simulate with demo data
+                    simulateDemoAnalysis();
+                }
+            } catch (err) {
+                console.error("Network error:", err);
+                // Simulate with demo data
+                simulateDemoAnalysis();
             }
         }
 
-        // Add file to list
+        // Demo simulation for when backend is not available
+        function simulateDemoAnalysis() {
+            addMessage("✅ File uploaded! Running demo analysis...", "agent");
+
+            setTimeout(() => {
+                const demoBrief = {
+                    data_type: "Product Dataset",
+                    total_rows: 150,
+                    total_columns: 12,
+                    unique_products: 45,
+                    brand_count: 8,
+                    purpose: "This dataset contains product information suitable for e-commerce, including prices, descriptions, and inventory details.",
+                    key_insights: [
+                        "Dataset contains complete product information ready for Shopify",
+                        "Price range shows good variety for different customer segments",
+                        "Multiple product variants detected for size and color options"
+                    ],
+                    column_names: ["Title", "Description", "Price", "Vendor", "Type", "Tags", "Image", "Variant", "SKU", "Inventory", "Weight", "Barcode"],
+                    price_stats: {
+                        min: 19.99,
+                        avg: 89.50,
+                        max: 299.99
+                    },
+                    brands: ["Nike", "Adidas", "Under Armour", "Puma", "Reebok", "New Balance", "Asics", "Brooks"]
+                };
+
+                renderBrief(demoBrief);
+
+                setTimeout(() => {
+                    showAnalysisProgress(5, 6, "🎨 Generating product variants and SEO optimization...");
+
+                    setTimeout(() => {
+                        showAnalysisProgress(6, 6, "📄 Creating final Shopify CSV file...");
+                        addMessage("🎉 Demo Analysis Complete! This is a preview with sample data.", "agent");
+
+                        const demoResults = {
+                            status: "success",
+                            total_products: 45,
+                            products: {
+                                "nike-air-max": [{
+                                    Title: "Nike Air Max Running Shoes",
+                                    Vendor: "Nike",
+                                    "Variant Price": "129.99"
+                                }],
+                                "adidas-ultraboost": [{
+                                    Title: "Adidas Ultraboost Sneakers",
+                                    Vendor: "Adidas",
+                                    "Variant Price": "179.99"
+                                }]
+                            }
+                        };
+
+                        renderShopifyPreview(demoResults, "demo");
+                    }, 2000);
+                }, 2000);
+            }, 1500);
+        }
+
+        async function fetchBrief(clientId) {
+            try {
+                const res = await fetch(`${API_BASE_URL}/brief/${clientId}`);
+                const data = await res.json();
+                if (data.status === 'success') {
+                    renderBrief(data.brief);
+                }
+            } catch (e) {
+                console.error("Brief fetch failed", e);
+            }
+        }
+
+        function startPolling(clientId) {
+            if (pollingInterval) clearInterval(pollingInterval);
+            let stepCounter = 4;
+
+            pollingInterval = setInterval(async () => {
+                try {
+                    const res = await fetch(`${API_BASE_URL}/status/${clientId}`);
+                    const data = await res.json();
+
+                    if (data.status === 'completed') {
+                        clearInterval(pollingInterval);
+
+                        showAnalysisProgress(5, 6, "🎨 Generating product variants and SEO optimization...");
+                        await new Promise(resolve => setTimeout(resolve, 1500));
+
+                        showAnalysisProgress(6, 6, "📄 Creating final Shopify CSV file...");
+                        addMessage("🎉 AI Analysis Complete! Your Shopify-ready CSV is ready for download.", "agent");
+
+                        fetchResults(clientId);
+                    } else {
+                        const messages = [
+                            "📊 Analyzing data relationships and patterns...",
+                            "🔍 Generating statistical insights with AI...",
+                            "🧠 Applying advanced AI intelligence analysis...",
+                            "🛒 Optimizing data for Shopify compatibility..."
+                        ];
+                        const randomMessage = messages[Math.floor(Math.random() * messages.length)];
+                        showAnalysisProgress(stepCounter, 6, randomMessage);
+                    }
+                } catch (err) {
+                    console.error("Polling error:", err);
+                }
+            }, 3000);
+        }
+
+        async function fetchResults(clientId) {
+            try {
+                const res = await fetch(`${API_BASE_URL}/results/${clientId}`);
+                const data = await res.json();
+                if (data.status === 'success') {
+                    renderShopifyPreview(data, clientId);
+                }
+            } catch (e) {
+                console.error("Results fetch failed", e);
+            }
+        }
+
+        function showAnalysisProgress(currentStep, totalSteps, stepMessage) {
+            const progressPercent = Math.round((currentStep / totalSteps) * 100);
+            dataPanelContent.innerHTML = `
+                <div class="analysis-progress" style="padding: 20px;">
+                    <div class="progress-header" style="text-align: center; margin-bottom: 20px;">
+                        <h4 style="color: #2563eb; margin: 0 0 10px 0;">🔬 Analyzing for Shopify</h4>
+                        <div class="progress-bar" style="width: 100%; height: 8px; background: #2a2a2a; border-radius: 4px; overflow: hidden;">
+                            <div class="progress-fill" style="width: ${progressPercent}%; height: 100%; background: linear-gradient(90deg, #2563eb, #764ba2); transition: width 0.5s ease;"></div>
+                        </div>
+                        <p style="color: #9ca3af; font-size: 12px; margin: 8px 0 0 0;">Step ${currentStep} of ${totalSteps} • ${progressPercent}% Complete</p>
+                    </div>
+
+                    <div class="analysis-steps" style="margin-top: 20px;">
+                        ${generateStepItem(1, currentStep, "File Structure Analysis", "Detecting columns, data types, and file format")}
+                        ${generateStepItem(2, currentStep, "Statistical Analysis", "Analyzing numerical and categorical data distributions")}
+                        ${generateStepItem(3, currentStep, "AI-Powered Insights", "Generating intelligent data interpretation and business insights")}
+                        ${generateStepItem(4, currentStep, "Shopify Format Conversion", "Mapping data to Shopify CSV format with proper headers")}
+                        ${generateStepItem(5, currentStep, "Product Variant Generation", "Creating product variants based on size, color, and material")}
+                        ${generateStepItem(6, currentStep, "Final CSV Generation", "Preparing Shopify-ready CSV file for download")}
+                    </div>
+
+                    <div class="current-step-message" style="text-align: center; margin-top: 20px; padding: 12px; background: #2563eb; border-radius: 6px; color: white;">
+                        <div style="font-size: 14px; font-weight: 600;">${stepMessage}</div>
+                    </div>
+                </div>`;
+        }
+
+        function generateStepItem(stepNum, currentStep, title, desc) {
+            const isCompleted = currentStep >= stepNum;
+            return `
+                <div class="step-item ${isCompleted ? 'completed' : ''}" style="display: flex; align-items: center; margin-bottom: 12px; padding: 8px; border-radius: 6px; background: ${isCompleted ? '#1a3a2a' : '#2a2a2a'};">
+                    <div class="step-icon" style="width: 24px; height: 24px; border-radius: 50%; background: ${isCompleted ? '#10b981' : '#6b7280'}; display: flex; align-items: center; justify-content: center; margin-right: 12px; font-size: 12px; color: white;">${isCompleted ? '✓' : stepNum}</div>
+                    <div class="step-content">
+                        <div class="step-title" style="font-size: 13px; font-weight: 600; color: ${isCompleted ? '#10b981' : '#e0e0e0'};">${title}</div>
+                        <div class="step-desc" style="font-size: 11px; color: #9ca3af;">${desc}</div>
+                    </div>
+                </div>`;
+        }
+
+        function renderBrief(brief) {
+            const shopifyRequiredFields = ['Title', 'Variant Price', 'Vendor', 'Product Type', 'Handle'];
+            const availableFields = brief.column_names || [];
+            const shopifyReadiness = Math.round((availableFields.filter(field =>
+                shopifyRequiredFields.some(required => field.toLowerCase().includes(required.toLowerCase()))
+            ).length / shopifyRequiredFields.length) * 10);
+
+            let html = `
+            <div class="brief-section">
+                <div class="ai-insights-header">
+                    <div><span class="ai-label">Data Type</span><span class="ai-value">${brief.data_type || 'Product Dataset'}</span></div>
+                    <div><span class="ai-label">Shopify Ready</span><span class="ai-quality-badge quality-excellent">${shopifyReadiness}/10</span></div>
+                    <div><span class="ai-label">Products</span><span class="ai-value">${brief.total_rows}</span></div>
+                </div>
+
+                <div class="brief-stat-grid">
+                    <div class="brief-stat-card"><div class="brief-stat-value">${brief.total_columns}</div><div class="brief-stat-label">Columns Detected</div></div>
+                    <div class="brief-stat-card"><div class="brief-stat-value">${brief.unique_products || brief.brand_count || brief.total_rows || 0}</div><div class="brief-stat-label">Potential Products</div></div>
+                </div>
+
+                ${brief.purpose ? `
+                <div class="brief-subsection">
+                    <div class="brief-subsection-title">🎯 AI Product Analysis</div>
+                    <div class="ai-purpose-text">${brief.purpose}</div>
+                </div>` : ''}
+
+                ${brief.key_insights && brief.key_insights.length > 0 ? `
+                <div class="brief-subsection">
+                    <div class="brief-subsection-title">💡 Shopify Optimization Insights</div>
+                    ${brief.key_insights.map(i => `<div class="ai-insight-item"><span>🛍️</span><span>${i}</span></div>`).join('')}
+                </div>` : ''}
+
+                <div class="brief-subsection">
+                    <div class="brief-subsection-title">🏷️ Detected Product Schema</div>
+                    <div style="margin-top:8px;">
+                        ${brief.column_names ? brief.column_names.slice(0, 15).map(c => `<span class="brief-tag">${c}</span>`).join('') : ''}
+                        ${brief.column_names && brief.column_names.length > 15 ? `<span class="brief-tag" style="background: #6b7280;">+${brief.column_names.length - 15} more</span>` : ''}
+                    </div>
+                </div>
+
+                ${brief.price_stats ? `
+                <div class="brief-subsection">
+                    <div class="brief-subsection-title">💰 Pricing Analysis</div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 8px;">
+                        <div class="brief-stat-card" style="text-align: center;">
+                            <div class="brief-stat-value" style="color: #10b981;">${brief.price_stats.min?.toFixed(2) || '0.00'}</div>
+                            <div class="brief-stat-label">Min Price</div>
+                        </div>
+                        <div class="brief-stat-card" style="text-align: center;">
+                            <div class="brief-stat-value" style="color: #2563eb;">${brief.price_stats.avg?.toFixed(2) || '0.00'}</div>
+                            <div class="brief-stat-label">Avg Price</div>
+                        </div>
+                        <div class="brief-stat-card" style="text-align: center;">
+                            <div class="brief-stat-value" style="color: #f59e0b;">${brief.price_stats.max?.toFixed(2) || '0.00'}</div>
+                            <div class="brief-stat-label">Max Price</div>
+                        </div>
+                    </div>
+                </div>` : ''}
+
+                ${brief.brands && brief.brands.length > 0 ? `
+                <div class="brief-subsection">
+                    <div class="brief-subsection-title">🏢 Brands Identified (${brief.brand_count || brief.brands.length})</div>
+                    <div style="margin-top:8px;">
+                        ${brief.brands.slice(0, 8).map(b => `<span class="brief-tag" style="background: #2563eb;">${b}</span>`).join('')}
+                        ${brief.brands.length > 8 ? `<span class="brief-tag" style="background: #6b7280;">+${brief.brands.length - 8} more</span>` : ''}
+                    </div>
+                </div>` : ''}
+            </div>`;
+
+            dataPanelContent.innerHTML = html;
+        }
+
+        function renderShopifyPreview(results, clientId) {
+            let existing = dataPanelContent.innerHTML;
+            let productHtml = `
+            <div style="border-top: 2px solid #3a3a3a; margin-top:20px; padding-top:20px;">
+                <div class="brief-subsection-title">🛍️ Shopify Preview (${results.total_products} Products)</div>
+                <button class="download-btn" onclick="${clientId === 'demo' ? 'alert(\'Demo mode - Connect to backend for actual downloads\')' : `location.href='${API_BASE_URL}/download/${clientId}'`}">📥 Download Shopify CSV</button>
+                <div style="margin-top:15px;">`;
+
+            const handles = Object.keys(results.products).slice(0, 5);
+            handles.forEach(h => {
+                const p = results.products[h][0];
+                productHtml += `
+                <div class="product-card">
+                    <div class="product-header">
+                        <span style="font-weight:bold; font-size:14px;">${p.Title}</span>
+                        <span class="variant-count">${results.products[h].length} variants</span>
+                    </div>
+                    <div style="font-size:12px; color:#9ca3af;">
+                        Vendor: ${p.Vendor || 'N/A'} | Price: ${p['Variant Price'] || '0.00'}
+                    </div>
+                </div>`;
+            });
+
+            productHtml += `</div></div>`;
+            dataPanelContent.innerHTML = existing + productHtml;
+        }
+
+        function startNewChat() {
+            chatMessages.innerHTML = '';
+            dataPanelContent.innerHTML = `
+                <div class="empty-state">
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    <p>Upload a file to start AI analysis</p>
+                </div>`;
+            currentClientId = null;
+            if (pollingInterval) clearInterval(pollingInterval);
+            uploadedFiles = [];
+            showInitialGreeting();
+        }
+
+        // Drag and Drop
+        const uploadBox = document.getElementById('uploadBox');
+
+        uploadBox.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadBox.classList.add('dragging');
+        });
+
+        uploadBox.addEventListener('dragleave', () => {
+            uploadBox.classList.remove('dragging');
+        });
+
+        uploadBox.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadBox.classList.remove('dragging');
+            document.getElementById('fileInput').files = e.dataTransfer.files;
+            handleFileUpload();
+        });
+
+        // File list management
         function addFileToList(file) {
             const fileList = document.getElementById('fileList');
             const fileItem = document.createElement('div');
             fileItem.className = 'file-item';
             fileItem.innerHTML = `
-                        <div class="file-icon">📄</div>
-                        <div class="file-info">
-                            <p class="file-name">${escapeHtml(file.name)}</p>
-                            <p class="file-meta">${(file.size / 1024).toFixed(2)} KB</p>
-                        </div>
-                        <button class="file-action-btn" onclick="removeFile(this)">
-                            <svg width="18" height="18" fill="currentColor" viewBox="0 0 24 24">
-                                <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
-                            </svg>
-                        </button>
-                    `;
+                <div class="file-icon">
+                    <svg width="20" height="20" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zM14 3.5L18.5 8H15a1 1 0 01-1-1V3.5z" />
+                    </svg>
+                </div>
+                <div class="file-info">
+                    <p class="file-name">${file.name}</p>
+                    <p class="file-meta">${(file.size / 1024).toFixed(2)} KB</p>
+                </div>
+                <button class="file-action-btn" onclick="this.parentElement.remove()">
+                    <svg width="18" height="18" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
+                    </svg>
+                </button>
+            `;
             fileList.appendChild(fileItem);
         }
-
-        // Remove file
-        function removeFile(button) {
-            button.closest('.file-item').remove();
+        function clearFileList() {
+            document.getElementById('fileList').innerHTML = '';
         }
-
-        // Enter key to send message
-        document.getElementById('messageInput').addEventListener('keypress', function (e) {
-            if (e.key === 'Enter') {
-                sendMessage();
-            }
-        });
     </script>
 </body>
-
 </html>

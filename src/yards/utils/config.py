@@ -18,5 +18,5 @@ SHOPIFY_HEADERS = [
     "Google Shopping / Custom Product","Variant Image","Variant Weight Unit","Variant Tax Code",
     "Cost per item","Included / United States","Price / United States",
     "Compare At Price / United States","Included / International","Price / International",
-    "Compare At Price / International","Status"
+    "Compare At Price / International","Status","Official Site Title","Official Site Description",
 ]

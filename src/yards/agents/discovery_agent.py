@@ -36,17 +36,17 @@ async def discovery_step(state):
             raise ValueError("Unsupported file format")
 
         # --- Extract product titles ---
-        # product_titles = [
-        #     row["Title"]
-        #     for row in file_info.to_dict(orient="records")
-        #     if pd.notna(row.get("Title", "") and row.get("Title", "").strip() != "")
-        # ]
-
         product_titles = [
-            row["Product name in PI"]
+            row["Title"]
             for row in file_info.to_dict(orient="records")
-            if pd.notna(row.get("Product name in PI", "") and row.get("Product name in PI", "").strip() != "")
+            if pd.notna(row.get("Title", "") and row.get("Title", "").strip() != "")
         ]
+
+        #product_titles = [
+        #    row["Product name in PI"]
+        #    for row in file_info.to_dict(orient="records")
+        #   if pd.notna(row.get("Product name in PI", "") and row.get("Product name in PI", "").strip() != "")
+        # ]
 
         # --- Scrape data ---
         scraper_response = await get_multi_source_product_pages(product_titles)
@@ -136,31 +136,69 @@ async def discovery_step(state):
                 - Handle MUST NEVER be reused as Title.
 
                 --------------------------------------------------
-                PRODUCT DESCRIPTION RULES
+                BODY HTML / PRODUCT DESCRIPTION RULES (MANDATORY)
                 --------------------------------------------------
-                - "Body (HTML)" MUST:
-                • be wrapped in <p>...</p>
-                • contain NO newline characters
-                - Preserve original marketing content.
+                - Use the value from "Body HTML" in the input product data as the
+                  starting point. Do NOT rewrite it from scratch.
+                - If "Body HTML" in the input is non-empty → clean it as described
+                  below and use it directly as "Body (HTML)" in your output.
+                - Output must use only these tags: <p>, <ul>, <li>, <strong>, <h2>, <h3>.
+                - No newline characters (\n) inside the HTML string.
+
+                SPELLING AND GRAMMAR — fix all of these without exception:
+                • "Color may very"     → "Color may vary"
+                • "Colour may very"    → "Colour may vary"
+                • "Pride to made"      → "Proudly made"
+                • "Signature bat"      → "Autograph bat"  (in autograph kit context)
+                • Fix any other obvious spelling or grammar mistakes in the text.
+
+                REMOVE — strip out these lines completely, they are NOT product details:
+                • Any line containing "Manufactured and Marketed by:"
+                • Any line containing "Manufactured by:"
+                • Any line containing "Marketed by:"
+                • Any full postal address (road name, city, district, PIN code, state, country)
+                • Any company registration or legal disclaimer text
+                • Shipping, return, or delivery policy text
+                • Website navigation fragments
+
+                KEEP — include only genuine product information:
+                • Product features and specifications
+                • Kit contents / what is included in the box / net quantity
+                • Materials and construction details
+                • Size, weight, color options
+                • Performance or usage details
 
                 --------------------------------------------------
                 IMAGE RULES
                 --------------------------------------------------
-                - Do NOT create variants per image.
-                - Duplicate variant rows per image:
-                • Change ONLY Image Src, Image Position, Image Alt Text
-                - Image Src MUST be a valid absolute URL.
-                - Image Position starts from 1.
+                - Use ONLY unique image URLs.
+                - If the same URL appears multiple times → include it ONLY ONCE
+                  at Image Position 1. Do NOT repeat the same URL in multiple rows.
+                - Create a new row (duplicate) ONLY when Image Src URLs are
+                  genuinely different from each other.
+                - If only one unique image URL is available → output exactly ONE
+                  row with Image Position = 1. Do NOT repeat it.
+                - Image Src MUST be a valid absolute URL starting with https://.
+                - Image Position starts at 1 and increments only for truly different URLs.
+                - Image Alt Text format: "[Product Title] - [Brand Name]"
 
                 --------------------------------------------------
                 SEO RULES
                 --------------------------------------------------
-                Generate ONLY if missing:
-                - SEO Title (short, keyword-rich)
-                - SEO Description (single sentence, benefit-driven)
-                - Image Alt Text (descriptive)
-                - Tags (comma-separated)
-                - Condition defaults to "new"
+                - SEO Title: Copy the product Title exactly as-is. Do not modify it.
+                - SEO Description:
+                  • If "SEO Description" in the input product data is non-empty →
+                    use it directly. Do NOT rewrite it.
+                  • If empty → write ONE benefit-driven sentence, max 160 characters,
+                    covering: what the product is, key contents or feature, brand name.
+                  • Must NOT be a comma-joined list of words.
+                  • Must NOT contain vague filler: "a well-known brand", "best quality",
+                    "order today", "buy now", "free shipping".
+                  • Must NOT contain any manufacturer address or company details.
+                  • Good example: "SS Toe Guard Kit includes Fevibond, Toe Guard and
+                    sandpaper for secure bat toe protection during cricket."
+                - Tags: comma-separated, lowercase, relevant cricket keywords only.
+                - Condition defaults to "new".
 
                 --------------------------------------------------
                 FINAL VALIDATION (MANDATORY)
@@ -172,6 +210,21 @@ async def discovery_step(state):
                 --------------------------------------------------
                 SHOPIFY HEADERS:
                 {", ".join(SHOPIFY_HEADERS)}
+
+                --------------------------------------------------
+                ADDITIONAL REQUIRED FIELDS:
+                These 2 fields MUST be included in every JSON object in the output array.
+                They are NOT part of the Shopify headers but MUST appear alongside them in every row.
+
+                1. "Official Site Title"
+                   - Value: {product_detail.get("Official Site Title", "")}
+                   - Copy this value exactly as-is. Do NOT modify, summarize, or rewrite it.
+                   - If empty → use "".
+
+                2. "Official Site Description"
+                   - Value: {product_detail.get("Official Site Description", "")}
+                   - Copy this value exactly as-is. Do NOT modify, summarize, or rewrite it.
+                   - If empty → use "".
 
                 --------------------------------------------------
                 Input product data:
@@ -188,7 +241,7 @@ async def discovery_step(state):
                 - Return PURE JSON only.
                 - The output MUST begin with "[" and end with "]".
                 - Do NOT include explanations, text, labels, or markdown.
-                - Do NOT prefix with lines like “Here is the processed JSON array:” or “Output:”.
+                - Do NOT prefix with lines like "Here is the processed JSON array:" or "Output:".
                 - Use empty strings ("") for missing text values and empty arrays ([]) for missing list values.
                 - "Body (HTML)" must not contain newline characters (\n), but must preserve valid HTML tags.
                 - Escape double quotes ONLY when they appear INSIDE string values.
@@ -207,8 +260,12 @@ async def discovery_step(state):
 
                 try:
                     extracted = json.loads(raw_json)
-                except:
-                    extracted = json.loads(sanitize_json_online_llm(raw_json))
+                except Exception:
+                    try:
+                        extracted = json.loads(sanitize_json_online_llm(raw_json))
+                    except Exception as json_err:
+                        print(f"⚠️ JSON parse failed, skipping product: {json_err}")
+                        extracted = []   # skip this product gracefully, don't crash
 
                 # Normalize to list
                 if isinstance(extracted, dict):
@@ -238,7 +295,10 @@ async def discovery_step(state):
                         value = item.get(k, "")
 
                         if k == "Vendor":
-                            vendor = value.lower()
+                            # If LLM left Vendor empty, use brand from scraper output
+                            if not value or str(value).strip() == "":
+                                value = product_detail.get("brand", "") or item.get("brand", "")
+                            vendor = str(value).lower()
 
                             MANUFACTURER_DIR = None
                             if "mrf" in vendor:
@@ -282,6 +342,57 @@ async def discovery_step(state):
 
                         clean_item[k] = str(value)
 
+                    # ── Fix missing/inconsistent fields before writing to Excel ──
+
+                    # Vendor fallback
+                    if not clean_item.get("Vendor") or clean_item["Vendor"] in ("", "None"):
+                        clean_item["Vendor"] = product_detail.get("brand", "") or item.get("brand", "")
+
+                    # Shopify required defaults
+                    if not clean_item.get("Variant Inventory Tracker"):
+                        clean_item["Variant Inventory Tracker"] = "shopify"
+                    if not clean_item.get("Variant Inventory Policy"):
+                        clean_item["Variant Inventory Policy"] = "deny"
+                    if not clean_item.get("Variant Fulfillment Service"):
+                        clean_item["Variant Fulfillment Service"] = "manual"
+                    if not clean_item.get("Variant Weight Unit"):
+                        clean_item["Variant Weight Unit"] = "kg"
+                    if not clean_item.get("Status") or clean_item["Status"] in ("", "None"):
+                        clean_item["Status"] = "active"
+                    if not clean_item.get("Included / United States"):
+                        clean_item["Included / United States"] = "true"
+                    if not clean_item.get("Included / International"):
+                        clean_item["Included / International"] = "true"
+
+                    # Image Alt Text auto-generation
+                    if not clean_item.get("Image Alt Text") or clean_item["Image Alt Text"] in ("", "None"):
+                        title  = clean_item.get("Title", "")
+                        vendor = clean_item.get("Vendor", "")
+                        clean_item["Image Alt Text"] = f"{title} - {vendor}".strip(" -")
+
+                    # ── BLANK OUT unwanted columns ─────────────────────────────
+                    # These columns are intentionally left empty in every row.
+                    # Option names/values, SKU, and Grams are not required.
+                    for blank_col in [
+                        "Option1 Name", "Option1 Value",
+                        "Option2 Name", "Option2 Value",
+                        "Option3 Name", "Option3 Value",
+                        "Variant SKU",
+                        "Variant Grams",
+                    ]:
+                        clean_item[blank_col] = ""
+                    # ──────────────────────────────────────────────────────────
+
+                    # Passthrough: Official Site Title and Description from scraper
+                    clean_item["Official Site Title"] = str(
+                        product_detail.get("Official Site Title", "")
+                        or item.get("Official Site Title", "")
+                    )
+                    clean_item["Official Site Description"] = str(
+                        product_detail.get("Official Site Description", "")
+                        or item.get("Official Site Description", "")
+                    )
+
                     # WRITE THE ROW
                     # writer.writerow(clean_item)
 
@@ -296,4 +407,4 @@ async def discovery_step(state):
         print(f"✅ Completed extraction for {filename_no_ext}")
 
     except Exception as e:
-        print(f"❌ Error in discovery_step: {e}")
+        print(f"❌ Error in discovery_step: {e}")   

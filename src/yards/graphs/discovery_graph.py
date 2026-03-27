@@ -41,14 +41,14 @@ def redirect_node(state):
 
 
 workflow = StateGraph(DiscoveryState)
-# workflow.add_node("rag", rag_node)
+workflow.add_node("rag", rag_node)
 
 async def process_file(state):
     return await discovery_step(state)
 
 workflow.add_node("discovery", process_file)
 
-# workflow.add_edge("discovery", "rag")
+workflow.add_edge("discovery", "rag")
 
 workflow.set_entry_point("discovery")
 

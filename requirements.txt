@@ -24,3 +24,6 @@ extruct
 rapidfuzz
 tldextract
 python-multipart
+openpyxl
+pyspellchecker
+chromium
