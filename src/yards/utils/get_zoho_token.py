@@ -77,11 +77,46 @@ class ZohoInventoryClient:
 
         new_tokens = response.json()
 
-        # Preserve refresh_token
-        new_tokens["refresh_token"] = self.tokens.get("refresh_token")
+        # ✅ Check if Zoho returned an error in the body
+        if "error" in new_tokens or "access_token" not in new_tokens:
+            raise Exception(
+                f"Token refresh failed: {new_tokens.get('error', new_tokens)}\n"
+                "Your refresh token may be expired. Re-authorize the app to get a new one."
+            )
 
+        new_tokens["refresh_token"] = self.tokens.get("refresh_token")
         self._save_tokens(new_tokens)
         return new_tokens
+
+    # ---------------------------
+    # API REQUEST WRAPPER
+    # ---------------------------
+    def make_request(self, method, endpoint, params=None, data=None):
+        url = f"{self.base_url}{endpoint}"
+        headers = {"Authorization": f"Zoho-oauthtoken {self.get_access_token()}"}
+
+        if not params:
+            params = {}
+        params["organization_id"] = self.organization_id
+
+        response = requests.request(method, url, headers=headers, params=params, json=data)
+
+        # ✅ Store json once to avoid double-parsing
+        response_data = response.json()
+
+        # ✅ Handle token expiry
+        if response.status_code == 401 or response_data.get("code") == 57:
+            self.refresh_access_token()
+            headers["Authorization"] = f"Zoho-oauthtoken {self.get_access_token()}"
+            response = requests.request(method, url, headers=headers, params=params, json=data)
+            response_data = response.json()
+
+            # ✅ Check retry result too
+            if response_data.get("code") == 57:
+                raise Exception(f"Still unauthorized after token refresh: {response_data}")
+
+        response.raise_for_status()
+        return response_data
 
     # ---------------------------
     # GET VALID ACCESS TOKEN
@@ -97,39 +132,6 @@ class ZohoInventoryClient:
             self.refresh_access_token()
 
         return self.tokens.get("access_token")
-
-    # ---------------------------
-    # API REQUEST WRAPPER
-    # ---------------------------
-    def make_request(self, method, endpoint, params=None, data=None):
-        url = f"{self.base_url}{endpoint}"
-
-        headers = {
-            "Authorization": f"Zoho-oauthtoken {self.get_access_token()}"
-        }
-
-        if not params:
-            params = {}
-
-        params["organization_id"] = self.organization_id
-
-        response = requests.request(
-            method,
-            url,
-            headers=headers,
-            params=params,
-            json=data
-        )
-        print(response.json())
-        if response.status_code == 401:
-            # Token expired → retry once
-            self.refresh_access_token()
-            headers["Authorization"] = f"Zoho-oauthtoken {self.get_access_token()}"
-            response = requests.request(method, url, headers=headers, params=params, json=data)
-
-        response.raise_for_status()
-        return response.json()
-
 
     def get_all_items(self, per_page=200):
         page = 1

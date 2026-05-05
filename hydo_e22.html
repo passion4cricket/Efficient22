@@ -572,7 +572,8 @@
         application:       current.app,
         user_query:        text,
         technology:       current.tech,
-        unique_session_id: String(current.id)
+        unique_session_id: String(current.id),
+        e22_access_token: ""   //Should be coming from database
       };
 
       const botReplyId = 'bot-reply-' + Date.now();

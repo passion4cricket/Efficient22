@@ -258,7 +258,7 @@ async def _run_compare(data: dict):
         logging.error(f"_run_compare error: {e}", exc_info=True)
         yield f'data: {json.dumps({"type": "error", "content": str(e)})}\n\n'
 
-async def _run_productname_compare():
+async def _run_productname_compare(e22_access_token: str):
 
     client_id = str(uuid.uuid4())
     CONNECTED_CLIENTS[client_id] = {"state": ProductNameCompareState()}
@@ -266,6 +266,7 @@ async def _run_productname_compare():
     try:
         state = CONNECTED_CLIENTS[client_id]["state"]
         state["user_id"] = client_id
+        state["e22_access_token"] = e22_access_token
 
         config = {"configurable": {"thread_id": client_id}}
 
@@ -302,6 +303,7 @@ class RouterRequest(BaseModel):
     user_query: str
     unique_session_id: str
     technology: str | None = None
+    e22_access_token: str | None = None
     # Optional pre-resolved file paths (populated by the frontend after upload)
     file_path: str | None = None
     file1_path: str | None = None
@@ -311,13 +313,14 @@ class RouterRequest(BaseModel):
 @app.post("/router")
 async def action_router(request: RouterRequest):
     async def sse_generator():
-        # from yards.memory.qdrant_memory import store_message, get_session_history
+        from yards.memory.qdrant_memory import store_message, get_session_history
 
         user_id = "default_user"
         session_id = request.unique_session_id or "default_session"
         application = request.application
         user_query = request.user_query
         technology = request.technology or None
+        e22_access_token = request.e22_access_token or None
         mapped_endpoint = endpoint_from_technology(technology)
 
         print(f"Router received query: {user_query} for application: {application} with session_id: {session_id} and technology: {technology}")
@@ -325,22 +328,22 @@ async def action_router(request: RouterRequest):
             print(f"Technology '{technology}' maps to endpoint '{mapped_endpoint}'")
 
         # 1. Persist incoming message
-        # store_message(
-        #     user_id=user_id,
-        #     session_id=session_id,
-        #     role="user",
-        #     message=user_query,
-        #     application=application,
-        # )
+        store_message(
+            user_id=user_id,
+            session_id=session_id,
+            role="user",
+            message=user_query,
+            application=application,
+        )
 
-        # # 2. Retrieve recent context for the LLM
-        # recent_history_list = get_session_history(
-        #     user_id=user_id,
-        #     session_id=session_id,
-        #     application=application,
-        #     limit=5,
-        # )
-        # conversation_context = "\n".join(recent_history_list)
+        # 2. Retrieve recent context for the LLM
+        recent_history_list = get_session_history(
+            user_id=user_id,
+            session_id=session_id,
+            application=application,
+            limit=5,
+        )
+        conversation_context = "\n".join(recent_history_list)
 
         yield f'data: {json.dumps({"type": "message", "content": "Analysing request..."})}\n\n'
 
@@ -381,7 +384,7 @@ Respond with ONLY a JSON object in this EXACT format:
         user_prompt = (
             f"Application: {application}\n"
             f"Query: {user_query}\n"
-            # f"Conversation history:\n{conversation_context}\n"
+            f"Conversation history:\n{conversation_context}\n"
             f"Technology: {technology if technology else 'not specified'}"
         )
 
@@ -404,17 +407,17 @@ Respond with ONLY a JSON object in this EXACT format:
             )
 
             # ── Missing info → ask the user ────────────────────────────────
-            # if missing_reqs:
-            #     store_message(
-            #         user_id=user_id,
-            #         session_id=session_id,
-            #         role="assistant",
-            #         message=missing_reqs,
-            #         application=application,
-            #     )
-            #     yield f'data: {json.dumps({"type": "message", "content": missing_reqs})}\n\n'
-            #     yield f'data: {json.dumps({"type": "done", "content": ""})}\n\n'
-            #     return
+            if missing_reqs:
+                store_message(
+                    user_id=user_id,
+                    session_id=session_id,
+                    role="assistant",
+                    message=missing_reqs,
+                    application=application,
+                )
+                yield f'data: {json.dumps({"type": "message", "content": missing_reqs})}\n\n'
+                yield f'data: {json.dumps({"type": "done", "content": ""})}\n\n'
+                return
 
             # ── Dispatch ───────────────────────────────────────────────────
             if endpoint == "upload":
@@ -436,7 +439,7 @@ Respond with ONLY a JSON object in this EXACT format:
                     yield chunk
             
             elif endpoint == "Productname_compare":
-                async for chunk in _run_productname_compare():
+                async for chunk in _run_productname_compare(e22_access_token):
                     yield chunk
 
             elif endpoint == "chatbot":

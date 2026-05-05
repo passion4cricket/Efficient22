@@ -22,8 +22,9 @@ ZOHO_ORG_ID = os.getenv("ZOHO_ORG_ID")
 async def product_name_compare(state):
     print("Starting product name comparison...")
 
-    # Shopify
-    shopify_products = await get_shopify_products()
+    e22_access_token = os.getenv("E22_ACCESS_TOKEN") or state.get("e22_access_token")
+
+    shopify_products = await get_shopify_products(e22_access_token)
     insert_shopify_products(shopify_products)
 
     # Zoho
@@ -49,13 +50,12 @@ async def product_name_compare(state):
 
     # name, City(Geography), store, quntity need to compare.
 
-async def get_shopify_products():
+async def get_shopify_products(e22_access_token: str):
     url = "https://22-yards-in.myshopify.com/admin/api/2025-10/graphql.json"
 
-    E22_ACCESS_TOKEN = os.getenv("E22_ACCESS_TOKEN")
 
     headers = {
-        "X-Shopify-Access-Token": E22_ACCESS_TOKEN,
+        "X-Shopify-Access-Token": e22_access_token,
         "Content-Type": "application/json"
     }
 

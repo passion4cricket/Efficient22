@@ -10,6 +10,7 @@ class ProductNameCompareState(dict):
     file_path: str = ""
     filename: str = ""
     region: str = ""
+    e22_access_token: str = ""
 
 def send_to_client(state):
     client_id = state["user_id"]
