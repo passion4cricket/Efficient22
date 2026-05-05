@@ -2,16 +2,15 @@ from pathlib import Path
 import os, sys, json, re
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_groq import ChatGroq
-from yards.utils.config import PROFIT_MARGIN
+from yards.utils.config import PROFIT_MARGIN, get_env_path
 from dotenv import load_dotenv
 import ollama
 import yfinance as yf
 import asyncio
-import config
 
 _model = None
 
-load_dotenv(config.get_env_path())
+load_dotenv(get_env_path())
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 def get_base_dir():

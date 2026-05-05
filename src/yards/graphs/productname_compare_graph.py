@@ -1,13 +1,11 @@
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
-from langgraph.graph.message import AnyMessage, add_messages
-from typing import Annotated, List
-from yards.agents.discovery_agent import discovery_step
+from yards.agents.productname_compare_agent import product_name_compare
 from yards.agents.rag_agent import RagAgent
 from fastapi import WebSocket
 from yards.utils.config import CONNECTED_CLIENTS
 
-class DiscoveryState(dict):    
+class ProductNameCompareState(dict):    
     user_id: str = ""
     file_path: str = ""
     filename: str = ""
@@ -37,20 +35,20 @@ def execution_agent(state):
 def redirect_node(state):
     if state['done'] and (state['user_input'] == 'yes' or state['user_input'] == 'ok'):
         return "execute"
-    return "discovery"
+    return "product_name_compare"
 
 
-workflow = StateGraph(DiscoveryState)
-workflow.add_node("rag", rag_node)
+workflow = StateGraph(ProductNameCompareState)
+# workflow.add_node("rag", rag_node)
 
 async def process_file(state):
-    return await discovery_step(state)
+    return await product_name_compare(state)
 
-workflow.add_node("discovery", process_file)
+workflow.add_node("product_name_compare", process_file)
 
-workflow.add_edge("discovery", "rag")
+# workflow.add_edge("product_name_compare", "rag")
 
-workflow.set_entry_point("discovery")
+workflow.set_entry_point("product_name_compare")
 
 memory = MemorySaver()
-discovery_graph = workflow.compile(checkpointer=memory)
+productname_graph = workflow.compile(checkpointer=memory)

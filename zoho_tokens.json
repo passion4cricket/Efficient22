@@ -1,0 +1,9 @@
+{
+    "access_token": "1000.ca38f64e1251e45ef4d07f1160c9f995.f2146af2960d734ba0003737b369e752",
+    "refresh_token": "1000.b6ed850732988bbb3b322f547f8c3e15.801f689e059e2d99ddab8fed00e0c984",
+    "scope": "ZohoInventory.items.READ",
+    "api_domain": "https://www.zohoapis.in",
+    "token_type": "Bearer",
+    "expires_in": 3600,
+    "created_at": 1777890969
+}

@@ -14,9 +14,9 @@ import time
 # from yards.utils.config import QDRANT_HOST, QDRANT_API_KEY, GROQ_API_KEY
 from groq import Groq
 from dotenv import load_dotenv
-import config
+from yards.utils.config import get_env_path
 
-load_dotenv(config.get_env_path())
+load_dotenv(get_env_path())
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 QDRANT_HOST = os.getenv("QDRANT_HOST")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
@@ -145,32 +145,46 @@ client.create_payload_index(
     field_schema=PayloadSchemaType.KEYWORD
 )
 
+client.create_payload_index(
+    collection_name=collection_name,
+    field_name="application",
+    field_schema=PayloadSchemaType.KEYWORD
+)
 
-def store_message(user_id: str, session_id: str, role: str, message: str):
+
+def store_message(user_id: str, session_id: str, role: str, message: str, application: str | None = None):
     embedding = embedder.encode(message).tolist()
+    payload = {
+        "user_id": str(user_id),
+        "session_id": str(session_id),
+        "role": str(role),
+        "message": str(message),
+        "timestamp": str(time.time())
+    }
+    if application is not None:
+        payload["application"] = str(application)
+
     point = PointStruct(
         id=str(uuid.uuid4()),  # unique ID per message
         vector=embedding,
-        payload={
-            "user_id": str(user_id),
-            "session_id": str(session_id),
-            "role": str(role),
-            "message": str(message),
-            "timestamp": str(time.time())
-        }
+        payload=payload
     )
     client.upsert(collection_name=collection_name, points=[point], wait=True)
 
 
-def get_session_history(user_id: str, session_id: str, limit: int = 10):
+def get_session_history(user_id: str, session_id: str, application: str | None = None, limit: int = 10):
     user_id = str(user_id)
     session_id = str(session_id)
 
+    must_conditions = [
+        FieldCondition(key="user_id", match=MatchValue(value=user_id)),
+        FieldCondition(key="session_id", match=MatchValue(value=session_id))
+    ]
+    if application is not None:
+        must_conditions.append(FieldCondition(key="application", match=MatchValue(value=str(application))))
+
     scroll_filter = Filter(
-        must=[
-            FieldCondition(key="user_id", match=MatchValue(value=user_id)),
-            FieldCondition(key="session_id", match=MatchValue(value=session_id))
-        ]
+        must=must_conditions
     )
 
     try:
