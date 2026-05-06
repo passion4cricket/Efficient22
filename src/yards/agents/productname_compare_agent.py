@@ -22,7 +22,7 @@ ZOHO_ORG_ID = os.getenv("ZOHO_ORG_ID")
 async def product_name_compare(state):
     print("Starting product name comparison...")
 
-    e22_access_token = os.getenv("E22_ACCESS_TOKEN") or state.get("e22_access_token")
+    e22_access_token = state.get("e22_access_token") or None
 
     shopify_products = await get_shopify_products(e22_access_token)
     insert_shopify_products(shopify_products)
