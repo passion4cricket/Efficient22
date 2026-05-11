@@ -1,7 +1,6 @@
-import asyncio
 import json
 import uuid
-from fastapi import FastAPI, File, UploadFile, Request
+from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from pathlib import Path
@@ -22,29 +21,6 @@ else:
     sys.path.insert(0, str(base_path))
 
 from yards.utils.config import set_env_path, CONNECTED_CLIENTS
-
-CLIENTS_LOCK = asyncio.Lock()
-
-async def register_client(state_cls):
-    client_id = str(uuid.uuid4())
-    state = state_cls()
-    async with CLIENTS_LOCK:
-        CONNECTED_CLIENTS[client_id] = {"state": state}
-    return client_id, state
-
-async def get_client_state(client_id):
-    async with CLIENTS_LOCK:
-        client = CONNECTED_CLIENTS.get(client_id)
-    return client["state"] if client else None
-
-async def update_client_state(client_id, state):
-    async with CLIENTS_LOCK:
-        if client_id in CONNECTED_CLIENTS:
-            CONNECTED_CLIENTS[client_id]["state"] = state
-
-async def unregister_client(client_id):
-    async with CLIENTS_LOCK:
-        CONNECTED_CLIENTS.pop(client_id, None)
 
 if getattr(sys, "frozen", False):
     set_env_path(Path(sys._MEIPASS) / ".env")
@@ -85,19 +61,25 @@ app.add_middleware(
 # ── Existing endpoints ────────────────────────────────────────────────────────
 
 @app.post("/upload")
-async def generate_shopify_format(file: UploadFile = File(...), request: Request = None):
-    origin = f"{request.client.host}:{request.client.port}" if request and request.client else "unknown"
-    client_id, state = await register_client(DiscoveryState)
+async def generate_shopify_format(file: UploadFile = File(...)):
+    client_id = str(uuid.uuid4())
+    CONNECTED_CLIENTS[client_id] = {"state": DiscoveryState()}
 
     try:
         filename = file.filename
-        unique_filename = f"{client_id}_{filename}"
-        file_path = os.path.join(UPLOAD_DIR, unique_filename)
-        logging.info(f"[upload] Received file: {filename} from {origin}, saving to: {file_path}")
+        file_path = os.path.join(UPLOAD_DIR, filename)
+        print(f"Received file: {filename}, saving to: {file_path}")
+
+        if os.path.exists(file_path):
+            name, ext = os.path.splitext(filename)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"{name}_{timestamp}{ext}"
+            file_path = os.path.join(UPLOAD_DIR, filename)
 
         with open(file_path, "wb") as f:
             f.write(await file.read())
 
+        state = CONNECTED_CLIENTS[client_id]["state"]
         state["user_id"] = client_id
         state["file_path"] = file_path
         state["filename"] = filename
@@ -105,29 +87,35 @@ async def generate_shopify_format(file: UploadFile = File(...), request: Request
 
         config = {"configurable": {"thread_id": client_id}}
         state = await discovery_graph.ainvoke(state, config=config)
-        await update_client_state(client_id, state)
+        CONNECTED_CLIENTS[client_id]["state"] = state
         return state
 
     except Exception as e:
-        logging.error(f"[upload] Error with client {client_id}: {e}", exc_info=True)
+        print(f"Error with client {client_id}: {e}")
         return {"status": 500, "message": str(e)}
 
 
 @app.post("/upload_amazon")
-async def generate_amazon_format(file: UploadFile = File(...), request: Request = None):
-    origin = f"{request.client.host}:{request.client.port}" if request and request.client else "unknown"
-    client_id, state = await register_client(AmazonState)
+async def generate_amazon_format(file: UploadFile = File(...)):
+    client_id = str(uuid.uuid4())
+    CONNECTED_CLIENTS[client_id] = {"state": AmazonState()}
 
-    logging.info(f"[main] /upload_amazon entered client_id={client_id} origin={origin}")
+    logging.info(f"[main] /upload_amazon entered client_id={client_id}")
     try:
         filename = file.filename
-        unique_filename = f"{client_id}_{filename}"
-        file_path = os.path.join(UPLOAD_DIR, unique_filename)
-        logging.info(f"[main] Received file: {filename} from {origin}, saving to: {file_path}")
+        file_path = os.path.join(UPLOAD_DIR, filename)
+        logging.info(f"[main] Received file: {filename}, saving to: {file_path}")
+
+        if os.path.exists(file_path):
+            name, ext = os.path.splitext(filename)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"{name}_{timestamp}{ext}"
+            file_path = os.path.join(UPLOAD_DIR, filename)
 
         with open(file_path, "wb") as f:
             f.write(await file.read())
 
+        state = CONNECTED_CLIENTS[client_id]["state"]
         state["user_id"] = client_id
         state["file_path"] = file_path
         state["filename"] = filename
@@ -135,30 +123,25 @@ async def generate_amazon_format(file: UploadFile = File(...), request: Request 
 
         config = {"configurable": {"thread_id": client_id}}
         state = await amazon_graph.ainvoke(state, config=config)
-        await update_client_state(client_id, state)
-        logging.info(f"[main] /upload_amazon completed client_id={client_id} origin={origin} output_keys={list(state.keys())}")
+        CONNECTED_CLIENTS[client_id]["state"] = state
+        logging.info(f"[main] /upload_amazon completed client_id={client_id} output_keys={list(state.keys())}")
         return state
 
     except Exception as e:
-        logging.error(f"[main] /upload_amazon failed client_id={client_id} origin={origin} error={e}", exc_info=True)
-        await unregister_client(client_id)
+        logging.error(f"[main] /upload_amazon failed client_id={client_id} error={e}", exc_info=True)
         return {"status": 500, "message": str(e)}
 
 
 @app.post("/compare")
 async def compare_fields(
-    request: Request,
     file1: UploadFile = File(...), file2: UploadFile = File(...)
 ):
     print(file1, file2)
-    origin = f"{request.client.host}:{request.client.port}" if request and request.client else "unknown"
     save_dir = "uploads/compare_files"
     os.makedirs(save_dir, exist_ok=True)
 
-    client_id = str(uuid.uuid4())
-    file1_path = os.path.join(save_dir, f"{client_id}_{file1.filename}")
-    file2_path = os.path.join(save_dir, f"{client_id}_{file2.filename}")
-    logging.info(f"[compare] Received compare request from {origin} file1={file1.filename} file2={file2.filename}")
+    file1_path = os.path.join(save_dir, file1.filename)
+    file2_path = os.path.join(save_dir, file2.filename)
 
     with open(file1_path, "wb") as f:
         f.write(await file1.read())
@@ -189,9 +172,11 @@ async def _run_upload(data: dict):
         yield f'data: {json.dumps({"type": "message", "content": "File not found. Please upload a valid file."})}\n\n'
         return
 
-    client_id, state = await register_client(DiscoveryState)
+    client_id = str(uuid.uuid4())
+    CONNECTED_CLIENTS[client_id] = {"state": DiscoveryState()}
 
     try:
+        state = CONNECTED_CLIENTS[client_id]["state"]
         state["user_id"] = client_id
         state["file_path"] = file_path
         state["filename"] = filename
@@ -201,7 +186,7 @@ async def _run_upload(data: dict):
         yield f'data: {json.dumps({"type": "message", "content": f"Processing {filename}..."})}\n\n'
 
         state = await discovery_graph.ainvoke(state, config=config)
-        await update_client_state(client_id, state)
+        CONNECTED_CLIENTS[client_id]["state"] = state
 
         yield f'data: {json.dumps({"type": "message", "content": f"Shopify format generated for {filename}."})}\n\n'
 
@@ -210,7 +195,7 @@ async def _run_upload(data: dict):
         yield f'data: {json.dumps({"type": "error", "content": str(e)})}\n\n'
 
     finally:
-        await unregister_client(client_id)
+        CONNECTED_CLIENTS.pop(client_id, None)
 
 
 async def _run_upload_amazon(data: dict):
@@ -221,9 +206,11 @@ async def _run_upload_amazon(data: dict):
         yield f'data: {json.dumps({"type": "message", "content": "File not found. Please upload a valid file."})}\n\n'
         return
 
-    client_id, state = await register_client(AmazonState)
+    client_id = str(uuid.uuid4())
+    CONNECTED_CLIENTS[client_id] = {"state": AmazonState()}
 
     try:
+        state = CONNECTED_CLIENTS[client_id]["state"]
         state["user_id"] = client_id
         state["file_path"] = file_path
         state["filename"] = filename
@@ -233,7 +220,7 @@ async def _run_upload_amazon(data: dict):
         yield f'data: {json.dumps({"type": "message", "content": f"Processing {filename}..."})}\n\n'
 
         state = await amazon_graph.ainvoke(state, config=config)
-        await update_client_state(client_id, state)
+        CONNECTED_CLIENTS[client_id]["state"] = state
 
         yield f'data: {json.dumps({"type": "message", "content": f"Amazon format generated for {filename}."})}\n\n'
 
@@ -242,7 +229,7 @@ async def _run_upload_amazon(data: dict):
         yield f'data: {json.dumps({"type": "error", "content": str(e)})}\n\n'
 
     finally:
-        await unregister_client(client_id)
+        CONNECTED_CLIENTS.pop(client_id, None)
 
 
 async def _run_compare(data: dict):
@@ -273,25 +260,25 @@ async def _run_compare(data: dict):
 
 async def _run_productname_compare(e22_access_token: str):
 
-    client_id, state = await register_client(ProductNameCompareState)
+    client_id = str(uuid.uuid4())
+    CONNECTED_CLIENTS[client_id] = {"state": ProductNameCompareState()}
 
     try:
+        state = CONNECTED_CLIENTS[client_id]["state"]
         state["user_id"] = client_id
         state["e22_access_token"] = e22_access_token
 
         config = {"configurable": {"thread_id": client_id}}
-        yield f'data: {json.dumps({"type": "message", "content": "Starting product name compare..."})}\n\n'
 
         state = await productname_graph.ainvoke(state, config=config)
-        await update_client_state(client_id, state)
-        yield f'data: {json.dumps({"type": "message", "content": "Product name compare completed."})}\n\n'
+        CONNECTED_CLIENTS[client_id]["state"] = state
 
     except Exception as e:
         logging.error(f"_run_productname_compare error: {e}", exc_info=True)
         yield f'data: {json.dumps({"type": "error", "content": str(e)})}\n\n'
 
     finally:
-        await unregister_client(client_id)
+        CONNECTED_CLIENTS.pop(client_id, None)
 
 
 # ── Router endpoint ───────────────────────────────────────────────────────────
@@ -324,22 +311,21 @@ class RouterRequest(BaseModel):
 
 
 @app.post("/router")
-async def action_router(request: Request, payload: RouterRequest):
+async def action_router(request: RouterRequest):
     async def sse_generator():
         from yards.memory.qdrant_memory import store_message, get_session_history
 
         user_id = "default_user"
-        session_id = payload.unique_session_id or "default_session"
-        origin = f"{request.client.host}:{request.client.port}" if request.client else "unknown"
-        application = payload.application
-        user_query = payload.user_query
-        technology = payload.technology or None
-        e22_access_token = payload.e22_access_token or None
+        session_id = request.unique_session_id or "default_session"
+        application = request.application
+        user_query = request.user_query
+        technology = request.technology or None
+        e22_access_token = request.e22_access_token or None
         mapped_endpoint = endpoint_from_technology(technology)
 
-        logging.info(f"Router received query: {user_query} for application: {application} with session_id: {session_id} technology: {technology} origin: {origin}")
+        print(f"Router received query: {user_query} for application: {application} with session_id: {session_id} and technology: {technology}")
         if mapped_endpoint:
-            logging.info(f"Technology '{technology}' maps to endpoint '{mapped_endpoint}'")
+            print(f"Technology '{technology}' maps to endpoint '{mapped_endpoint}'")
 
         # 1. Persist incoming message
         store_message(
@@ -362,8 +348,6 @@ async def action_router(request: Request, payload: RouterRequest):
         yield f'data: {json.dumps({"type": "message", "content": "Analysing request..."})}\n\n'
 
         llm, prompt = llm_init()
-
-        yield f'data: {json.dumps({"type": "meta", "origin": origin, "session_id": session_id})}\n\n'
 
         # ── System prompt ──────────────────────────────────────────────────
         system_prompt = f"""You are an intelligent API router for a Shopify file-conversion tool.
@@ -438,19 +422,19 @@ Respond with ONLY a JSON object in this EXACT format:
             # ── Dispatch ───────────────────────────────────────────────────
             if endpoint == "upload":
                 # Prefer explicitly provided path; fall back to UPLOAD_DIR lookup
-                file_path = payload.file_path or os.path.join(UPLOAD_DIR, filename)
+                file_path = request.file_path or os.path.join(UPLOAD_DIR, filename)
                 async for chunk in _run_upload({"file_path": file_path, "filename": filename}):
                     yield chunk
 
             elif endpoint == "amazon":
-                file_path = payload.file_path or os.path.join(UPLOAD_DIR, filename)
+                file_path = request.file_path or os.path.join(UPLOAD_DIR, filename)
                 async for chunk in _run_upload_amazon({"file_path": file_path, "filename": filename}):
                     yield chunk
 
             elif endpoint == "compare":
                 save_dir = "uploads/compare_files"
-                file1_path = payload.file1_path or os.path.join(save_dir, file1_name)
-                file2_path = payload.file2_path or os.path.join(save_dir, file2_name)
+                file1_path = request.file1_path or os.path.join(save_dir, file1_name)
+                file2_path = request.file2_path or os.path.join(save_dir, file2_name)
                 async for chunk in _run_compare({"file1_path": file1_path, "file2_path": file2_path}):
                     yield chunk
             
