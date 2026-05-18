@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 import tldextract
 from spellchecker import SpellChecker
 
-from yards.utils.config import AMAZON_HEADERS
+from yards.utils.config import AMAZON_HEADERS, SHOPIFY_HEADERS
 
 
 # =============================================================================
