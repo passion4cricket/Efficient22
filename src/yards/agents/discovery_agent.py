@@ -1,17 +1,10 @@
 import json
 import os
-import sys
 import pandas as pd
 import csv
 import re
 import asyncio
-from pathlib import Path
 from openpyxl import Workbook
-
-# Ensure src/ is on sys.path so package imports work from different entrypoints.
-REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
 
 from yards.utils.config import SHOPIFY_HEADERS
 from yards.utils.utils import llm_init, call_llm, price_conversion, convert_inr_to_usd

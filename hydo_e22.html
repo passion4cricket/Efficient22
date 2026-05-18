@@ -277,9 +277,9 @@
             oninput="autoResize(this);updateCount();handleMentions(this)"></textarea>
           <div class="ia-btns">
             <button class="ib" title="Attach file" onclick="document.getElementById('file-input').click()">📎</button>
-            <input type="file" id="file-input" accept="image/*,.pdf,.txt,.csv,.md,.js,.py,.html,.json,.xlsx,.xls" multiple
+            <input type="file" id="file-input" accept=".xlsx,.xls,.csv" multiple
               style="display:none" onchange="handleFiles(event)" />
-            <button class="send-btn" id="send-btn" onclick="sendMessage()">Send ↑</button>
+            <button class="send-btn" id="send-btn" onclick="callAPI()">Send ↑</button>
           </div>
         </div>
         <div class="input-footer">
@@ -346,7 +346,7 @@
        Yards backend (port 5000) handles compare + upload.
        Agent backend (port 5001) handles Python/PowerBuilder.
     =================================================== */
-    const YARDS_BASE  = 'http://127.0.0.1:5000';
+    const YARDS_BASE  = 'http://127.0.0.1:5001';
     const AGENT_BASE  = 'http://127.0.0.1:5001';
     const CP_ENDPOINT = `${YARDS_BASE}/compare`;
     const CP_FIELD1   = 'file1';
@@ -380,7 +380,7 @@
        INPUT MODE SWITCHER
     =================================================== */
     function applyInputMode(tech) {
-      const isCompare = tech === 'Compare base sheet';
+      const isCompare = tech === 'compare';
       document.getElementById('chat-input-area').style.display   = isCompare ? 'none'  : 'block';
       document.getElementById('compare-only-area').style.display = isCompare ? 'block' : 'none';
       if (!isCompare) cpReset();
@@ -483,8 +483,7 @@
     }
     function buildBubble(m) {
       const isU = m.role === 'user';
-      const imgs = (m.images || []).map(s => `<img src="${s}" alt="img"/>`).join('');
-      const fls = (m.files || []).map(f => `<span style="font-size:.75rem;opacity:.65">📄 ${x(f)}</span><br/>`).join('');
+      const fls = (m.files || []).map(f => `<span style="font-size:.75rem;opacity:.65">📊 ${x(f)}</span><br/>`).join('');
       const tags = [m.app, m.tech].filter(Boolean).map(t => `<span class="meta-tag">${x(t)}</span>`).join('');
       return `
         <div class="msg-row ${isU ? 'user' : ''}">
@@ -494,7 +493,7 @@
               ${isU ? (tags || '') : '<span style="color:var(--accent);font-weight:600">Agent</span>'}
               <span>${m.time || ''}</span>
             </div>
-            <div class="bubble ${isU ? 'user-bubble' : 'bot-bubble'}">${imgs}${fls}${fmt(m.content)}</div>
+            <div class="bubble ${isU ? 'user-bubble' : 'bot-bubble'}">${fls}${fmt(m.content)}</div>
           </div>
         </div>`;
     }
@@ -530,16 +529,15 @@
     function hideTyping() { document.getElementById('typing')?.remove(); }
     function scrollBot() { const b = document.getElementById('messages'); b.scrollTop = b.scrollHeight; }
 
-    /* ===================================================
-       SEND — POST + fetch streaming (SSE over ReadableStream)
-       Replaces the old EventSource approach so we can use
-       POST with a JSON body matching RouterRequest.
-    =================================================== */
-    async function sendMessage() {
+    async function callAPI() {
       if (loading) return;
       const input = document.getElementById('msg-input');
       const text  = input.value.trim();
-      if (!text && pendingFiles.length === 0) return;
+      const hasFiles = pendingFiles.length > 0;
+
+      console.log("DHINESH " + current.tech + " " + document.getElementById('tech-select').value);
+
+      if (!text && !hasFiles) return;
       if (!current.app) { flash('Please select an Application first.'); return; }
 
       loading = true;
@@ -547,11 +545,12 @@
 
       const now  = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       const uMsg = {
-        role: 'user', content: text,
-        app: current.app, tech: current.tech,
-        images: pendingFiles.filter(f => f.type.startsWith('image/')).map(f => f.dataUrl),
-        files:  pendingFiles.filter(f => !f.type.startsWith('image/')).map(f => f.name),
-        time: now
+        role:    'user',
+        content: text,
+        app:     current.app,
+        tech:    current.tech,
+        files:   pendingFiles.map(f => f.name),
+        time:    now
       };
       current.messages.push(uMsg);
       appendBubble(uMsg);
@@ -561,20 +560,7 @@
       }
 
       input.value = ''; autoResize(input); updateCount();
-      const isDirectUpload = pendingFiles.length > 0 && ['upload','generate amazon format'].includes(current.tech);
-      if (!isDirectUpload) {
-        pendingFiles = []; renderFilePreviews();
-      }
       showTyping();
-
-      // ── Build the POST body matching RouterRequest ──────────────────────
-      const requestBody = {
-        application:       current.app,
-        user_query:        text,
-        technology:       current.tech,
-        unique_session_id: String(current.id),
-        e22_access_token: ""   //Should be coming from database
-      };
 
       const botReplyId = 'bot-reply-' + Date.now();
       const aMsg = {
@@ -584,71 +570,135 @@
       };
       current.messages.push(aMsg);
 
+      const filesToSend = [...pendingFiles];
+      pendingFiles = [];
+      renderFilePreviews();
+
       try {
         hideTyping();
         appendBubble(aMsg);
         const replyContainer = document.getElementById(botReplyId);
 
-        if (pendingFiles.length > 0 && ['upload','generate amazon format'].includes(current.tech)) {
-          await uploadFileToBackend(pendingFiles, current.tech, replyContainer, aMsg);
-        } else {
-          // ── POST with streaming body ────────────────────────────────────
-          const response = await fetch(routerEndpoint(), {
-            method:  'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify(requestBody)
-          });
+        const ENDPOINT_MAP = {
+          'upload':                `${YARDS_BASE}/upload`,
+          'generate amazon format': `${YARDS_BASE}/upload_amazon`,
+          'compare':               `${YARDS_BASE}/compare`,
+          'product name compare':  `${YARDS_BASE}/productname_compare`,
+        };
+        
+        const endpoint = ENDPOINT_MAP[document.getElementById('tech-select').value];
 
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status} — ${response.statusText}`);
+        if (!endpoint) {
+          addStreamItem(replyContainer, aMsg, `Unknown technology: ${current.tech}`);
+          return;
         }
 
-        // ── Read the SSE stream line-by-line ────────────────────────────
-        const reader  = response.body.getReader();
-        const decoder = new TextDecoder();
-        let   buffer  = '';
+        if (filesToSend.length > 0) {
+          // ── BRANCH A: File present → multipart FormData ───────────────
+          const fileItem = filesToSend[0];
 
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
+          if (filesToSend.length > 1) {
+            addStreamItem(replyContainer, aMsg, 'Only the first attached file will be sent.');
+          }
 
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop();         // keep the incomplete trailing line
+          const formData = new FormData();
+          formData.append('file', fileItem.file, fileItem.name);
+          if (text) formData.append('user_query', text);
 
-          for (const line of lines) {
-            if (!line.startsWith('data: ')) continue;
-            const raw = line.slice(6).trim();
-            if (!raw) continue;
+          addStreamItem(replyContainer, aMsg,
+            `Uploading ${fileItem.name}${text ? ' with your query' : ''} to backend…`);
 
-            let jsonEvent;
-            try { jsonEvent = JSON.parse(raw); }
-            catch (e) { console.warn('SSE parse error:', e, raw); continue; }
+          const response = await fetch(endpoint, { method: 'POST', body: formData });
 
-            // ── done signal → stop reading ──────────────────────────
-            if (jsonEvent.type === 'done') {
-              loading = false;
-              document.getElementById('send-btn').disabled = false;
-              input.focus();
-              break;
+          let payload = null;
+          try { payload = await response.json(); } catch (_) {}
+
+          if (!response.ok) {
+            throw new Error(payload?.message || `Upload failed ${response.status} ${response.statusText}`);
+          }
+
+          addStreamItem(replyContainer, aMsg,
+            payload?.message || 'File uploaded successfully. Backend processing has started.');
+          scrollBot();
+
+        } else {
+          // ── BRANCH B: No files → JSON body ───────────────────────────
+
+          if (current.tech === 'product name compare') {
+            // Plain JSON endpoint — no SSE
+            const response = await fetch(endpoint, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ e22_access_token: '' }) // replace '' with real token when available
+            });
+
+            let payload = null;
+            try { payload = await response.json(); } catch (_) {}
+
+            if (!response.ok) {
+              throw new Error(payload?.message || `Error ${response.status}`);
             }
 
-            // ── render stream item ──────────────────────────────────
-            const p = document.createElement('div');
-            p.className = 'stream-message-item';
-            if (jsonEvent.type === 'error') {
-              p.innerHTML = `❌ ${fmt(jsonEvent.content)}`;
-              p.style.color       = '#ef4444';
-              p.style.borderColor = '#fca5a5';
-            } else {
-              p.innerHTML = `✓ ${fmt(jsonEvent.content)}`;
-            }
-            replyContainer.appendChild(p);
-            aMsg.content += `<div class="stream-message-item">${p.innerHTML}</div>`;
+            addStreamItem(replyContainer, aMsg,
+              payload?.message || 'Product name compare completed.');
             scrollBot();
+
+          } else {
+            // SSE streaming endpoints
+            const response = await fetch(endpoint, {
+              method:  'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body:    JSON.stringify({
+                application:       current.app,
+                user_query:        text,
+                technology:        current.tech,
+                unique_session_id: String(current.id),
+                e22_access_token:  ''
+              })
+            });
+
+            if (!response.ok) {
+              throw new Error(`HTTP ${response.status} — ${response.statusText}`);
+            }
+
+            const reader  = response.body.getReader();
+            const decoder = new TextDecoder();
+            let   buffer  = '';
+
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+
+              buffer += decoder.decode(value, { stream: true });
+              const lines = buffer.split('\n');
+              buffer = lines.pop();
+
+              for (const line of lines) {
+                if (!line.startsWith('data: ')) continue;
+                const raw = line.slice(6).trim();
+                if (!raw) continue;
+
+                let jsonEvent;
+                try { jsonEvent = JSON.parse(raw); }
+                catch (e) { console.warn('SSE parse error:', e, raw); continue; }
+
+                if (jsonEvent.type === 'done') break;
+
+                const p = document.createElement('div');
+                p.className = 'stream-message-item';
+                if (jsonEvent.type === 'error') {
+                  p.innerHTML = `❌ ${fmt(jsonEvent.content)}`;
+                  p.style.color = '#ef4444'; p.style.borderColor = '#fca5a5';
+                } else {
+                  p.innerHTML = `✓ ${fmt(jsonEvent.content)}`;
+                }
+                replyContainer.appendChild(p);
+                aMsg.content += `<div class="stream-message-item">${p.innerHTML}</div>`;
+                scrollBot();
+              }
+            }
           }
         }
-      }
 
       } catch (err) {
         hideTyping();
@@ -668,59 +718,16 @@
       }
     }
 
-    async function uploadFileToBackend(files, tech, replyContainer, aMsg) {
-      const fileItem = files.find(f => f.file && !f.type.startsWith('image/')) || files.find(f => f.file);
-      if (!fileItem) {
-        throw new Error('Please attach an Excel or CSV file to upload.');
-      }
-
-      if (files.length > 1) {
-        const note = document.createElement('div');
-        note.className = 'stream-message-item';
-        note.textContent = 'Only the first attached file will be used for upload.';
-        replyContainer.appendChild(note);
-        aMsg.content += `<div class="stream-message-item">${fmt(note.textContent)}</div>`;
-      }
-
-      const endpoint = tech === 'generate amazon format'
-        ? `${YARDS_BASE}/upload_amazon`
-        : `${YARDS_BASE}/upload`;
-
-      const progressMsg = document.createElement('div');
-      progressMsg.className = 'stream-message-item';
-      progressMsg.textContent = `Uploading ${fileItem.name} to backend...`;
-      replyContainer.appendChild(progressMsg);
-      aMsg.content += `<div class="stream-message-item">${fmt(progressMsg.textContent)}</div>`;
-
-      const formData = new FormData();
-      formData.append('file', fileItem.file, fileItem.name);
-
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        body: formData
-      });
-
-      let payload = null;
-      try {
-        payload = await response.json();
-      } catch (parseError) {
-        payload = null;
-      }
-
-      if (!response.ok) {
-        const msg = payload?.message || `Upload failed ${response.status} ${response.statusText}`;
-        throw new Error(msg);
-      }
-
-      const doneMsg = document.createElement('div');
-      doneMsg.className = 'stream-message-item';
-      doneMsg.textContent = payload?.message || `File uploaded successfully. Backend processing has started.`;
-      replyContainer.appendChild(doneMsg);
-      aMsg.content += `<div class="stream-message-item">${fmt(doneMsg.textContent)}</div>`;
-      scrollBot();
-
-      pendingFiles = [];
-      renderFilePreviews();
+    /**
+     * Helper — appends a stream-message-item to the reply container
+     * and records it in the assistant message history.
+     */
+    function addStreamItem(container, aMsg, text) {
+      const el = document.createElement('div');
+      el.className = 'stream-message-item';
+      el.textContent = text;
+      container.appendChild(el);
+      aMsg.content += `<div class="stream-message-item">${fmt(text)}</div>`;
     }
 
     /* ===================================================
@@ -831,23 +838,21 @@
     /* ===================================================
        FILE HANDLING (chat attachments)
     =================================================== */
-    async function handleFiles(e) {
+    function handleFiles(e) {
       for (const f of Array.from(e.target.files)) {
-        const dataUrl = await toDataUrl(f);
-        const base64  = dataUrl.split(',')[1];
-        let txt = null;
-        if (/\.(txt|md|js|py|html|json|csv)$/i.test(f.name) || f.type === 'text/plain') txt = await f.text();
-        pendingFiles.push({ name: f.name, type: f.type || 'application/octet-stream', dataUrl, base64, txt, file: f });
+        // Only accept Excel / CSV files
+        if (!/\.(xlsx|xls|csv)$/i.test(f.name)) {
+          flash(`Skipped "${f.name}" — only .xlsx, .xls, .csv are supported.`);
+          continue;
+        }
+        pendingFiles.push({ name: f.name, type: f.type || 'application/octet-stream', file: f });
       }
       e.target.value = ''; renderFilePreviews();
-    }
-    function toDataUrl(f) {
-      return new Promise((r, j) => { const rd = new FileReader(); rd.onload = () => r(rd.result); rd.onerror = j; rd.readAsDataURL(f); });
     }
     function renderFilePreviews() {
       document.getElementById('file-bar').innerHTML = pendingFiles.map((f, i) => `
         <div class="f-chip">
-          ${f.type.startsWith('image/') ? `<img src="${f.dataUrl}" alt=""/>` : '📄'}
+          📊
           <span>${x(f.name)}</span>
           <span class="f-rm" onclick="removeFile(${i})">✕</span>
         </div>`).join('');
