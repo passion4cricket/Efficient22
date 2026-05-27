@@ -23,10 +23,11 @@ def get_base_dir():
         base_path = Path(__file__).resolve().parent.parent
         return base_path
     
-def llm_init():
+def llm_init(groq_api_key=None):
     # Initialize Groq LLM
+    active_key = groq_api_key or GROQ_API_KEY
     llm = ChatGroq(
-        groq_api_key=GROQ_API_KEY,
+        groq_api_key=active_key,
         model_name="llama-3.1-8b-instant",
         temperature=0,
     )

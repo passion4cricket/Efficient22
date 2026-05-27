@@ -10,6 +10,7 @@ class AmazonState(dict):
     file_path: str = ""
     filename: str = ""
     region: str = ""
+    message: str = ""
 
 
 workflow = StateGraph(AmazonState)

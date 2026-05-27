@@ -1,13 +1,26 @@
 import json
 import logging
 import os
+from datetime import datetime
 import re
 import pandas as pd
 from bs4 import BeautifulSoup
 from openpyxl import Workbook
 from rapidfuzz import fuzz, process
-from yards.utils.config import AMAZON_HEADERS
+from yards.utils.config import AMAZON_HEADERS, HOSTNAME, USERNAME, PASSWORD, DATABASE
 from yards.utils.scrape_data import get_multi_source_product_pages, format_products
+from yards.database.get_table_details import connect_db, upsert_product_details
+
+from yards.utils.scrape_data import (
+    get_multi_source_product_pages,
+    format_products,
+    _enrich_cricket_fields,      # ← ADD
+    _extract_warranty,           # ← ADD
+    _fill_package_dims,          # ← ADD
+    convert_weight_to_range,     # ← ADD
+    BAT_ALLOWED,                 # ← ADD
+    BRAND_TO_MANUFACTURER,       # ← ADD
+)
 
 PREDATA_DIR = os.path.join("uploads", "predata")
 PREDATA_EXTENSIONS = {".csv", ".xlsx", ".xls"}
@@ -310,42 +323,36 @@ def extract_first_variant_size(variants) -> str:
 
 
 def build_amazon_row(product_detail: dict) -> dict:
+    # Step 1: Pre-enrich with all cricket extraction helpers
+    product_detail = _enrich_cricket_fields(product_detail)
+
     title = str(
-        product_detail.get("Title")
-        or product_detail.get("title")
-        or product_detail.get("item-name")
-        or product_detail.get("item_name")
-        or product_detail.get("Official Site Title")
-        or ""
+        product_detail.get("Title") or product_detail.get("title")
+        or product_detail.get("item-name") or product_detail.get("item_name") or ""
     ).strip()
     title = expand_willow_abbreviations(title)
 
     brand = str(
-        product_detail.get("brand", "")
-        or product_detail.get("Brand", "")
-        or product_detail.get("brand-name", "")
-        or product_detail.get("brand_name", "")
-        or ""
+        product_detail.get("brand", "") or product_detail.get("Brand", "")
+        or product_detail.get("brand-name", "") or product_detail.get("brand_name", "") or ""
     ).strip()
+
     category = str(
-        product_detail.get("category", "")
-        or product_detail.get("Category", "")
-        or product_detail.get("feed_product_type", "")
-        or ""
+        product_detail.get("category", "") or product_detail.get("Category", "")
+        or product_detail.get("feed_product_type", "") or ""
     ).strip()
+
     item_type = str(
-        product_detail.get("type", "")
-        or product_detail.get("Type", "")
-        or product_detail.get("item-type", "")
-        or category
+        product_detail.get("type", "") or product_detail.get("Type", "")
+        or product_detail.get("item-type", "") or category
     ).strip()
+
     description = str(
-        product_detail.get("description", "")
-        or product_detail.get("Body HTML", "")
-        or product_detail.get("Body (HTML)", "")
-        or product_detail.get("body_html", "")
+        product_detail.get("description", "") or product_detail.get("Body HTML", "")
+        or product_detail.get("Body (HTML)", "") or product_detail.get("body_html", "")
     )
     description_plain = clean_text(description)
+
     tags = product_detail.get("tags", [])
     if isinstance(tags, str):
         if tags.strip():
@@ -353,12 +360,12 @@ def build_amazon_row(product_detail: dict) -> dict:
         else:
             tags = []
     if not tags:
-        tags = product_detail.get("Tags") or product_detail.get("tags") or []
+        tags = product_detail.get("Tags") or []
         if isinstance(tags, str):
             tags = [t.strip() for t in re.split(r",|;|\n|\r", tags) if t.strip()]
-    price_info = product_detail.get("price", {})
-    if not price_info:
-        price_info = product_detail.get("Price", product_detail.get("Variant Price", {}))
+
+    # Price
+    price_info = product_detail.get("price", {}) or product_detail.get("Price", {})
     if isinstance(price_info, dict):
         price_value = price_info.get("value", "")
         currency = price_info.get("currency", "")
@@ -366,90 +373,149 @@ def build_amazon_row(product_detail: dict) -> dict:
         price_value = price_info
         currency = ""
 
-    if isinstance(price_value, str):
-        price_text = price_value.strip()
-        if price_text:
-            match = re.search(r"([0-9]+(?:[\.,][0-9]{1,2})?)", price_text.replace(",", ""))
-            if match:
-                try:
-                    price_value = float(match.group(1))
-                except ValueError:
-                    pass
+    if isinstance(price_value, str) and price_value.strip():
+        match = re.search(r"([0-9]+(?:[\.,][0-9]{1,2})?)", price_value.replace(",", ""))
+        if match:
+            try:
+                price_value = float(match.group(1))
+            except ValueError:
+                pass
 
-    if not currency:
-        currency = str(
-            product_detail.get("currency", "")
-            or (product_detail.get("price") or {}).get("currency", "")
-            or product_detail.get("Price currency", "")
-        ).strip()
-        if not currency and isinstance(price_info, str):
-            if "\u20b9" in price_info or "inr" in price_info.lower():
-                currency = "INR"
-            elif "$" in price_info or "usd" in price_info.lower():
-                currency = "USD"
-            elif "£" in price_info or "gbp" in price_info.lower():
-                currency = "GBP"
-
-    images = product_detail.get("images", []) or []
+    # Images
+    images = product_detail.get("Official Images") or product_detail.get("images", []) or []
     if not images:
-        images = product_detail.get("Image Src") or product_detail.get("images") or product_detail.get("image_src") or []
+        images = product_detail.get("Image Src") or product_detail.get("image_src") or []
     if isinstance(images, str):
         images = [images]
     if isinstance(images, dict):
         images = [images]
     images = [str(img).strip() for img in images if str(img).strip()]
 
+    # Cricket-specific enriched fields
+    blade_material = str(product_detail.get("Blade Material", "")).strip()
+    weight_range   = str(product_detail.get("Weight Range", "")).strip()
+    sport_type     = str(product_detail.get("Sport Type", "Cricket")).strip() or "Cricket"
+    size_value     = str(product_detail.get("Size", "")).strip() or extract_first_variant_size(
+        product_detail.get("variants", [])
+    )
+    manufacturer   = str(product_detail.get("Manufacturer Details", "")).strip()
+    if not manufacturer:
+        brand_key = brand.upper()
+        manufacturer = BRAND_TO_MANUFACTURER.get(brand_key, brand)
+
+    playing_level  = str(product_detail.get("Playing Level", "")).strip()
+    handle_grip    = str(product_detail.get("Handle Grip Type", "")).strip()
+    handle_mat     = str(product_detail.get("Handle Material", "")).strip()
+    sku            = str(product_detail.get("official_sku", "") or product_detail.get("sku", "") or "").strip()
+    country        = str(product_detail.get("country_of_origin", "India") or "India").strip()
+
+    # Color
+    color_value = str(product_detail.get("Color", "")).strip()
+    if not color_value:
+        allowed_colors = [c.lower() for c in BAT_ALLOWED.get("Color", [])]
+        for tag in tags:
+            if tag.lower() in allowed_colors:
+                color_value = tag.capitalize()
+                break
+
+    # Material (blade material or generic)
+    material = blade_material or ""
+    if not material:
+        for tag in tags:
+            if tag.lower() in ["leather", "wood", "carbon", "polyester", "nylon", "rubber", "foam"]:
+                material = tag.capitalize()
+                break
+
+    # Warranty
+    warranty_text = ""
+    w_data = product_detail.get("Warranty Summary", "") or product_detail.get("Domestic Warranty", "")
+    if w_data and str(w_data).strip() not in ("", "No Warranty"):
+        warranty_text = str(w_data).strip()
+
+    # Package dims (already filled by _fill_package_dims inside _enrich_cricket_fields)
+    pkg_length  = str(product_detail.get("Length (CM)", "")).strip()
+    pkg_breadth = str(product_detail.get("Breadth (CM)", "")).strip()
+    pkg_height  = str(product_detail.get("Height (CM)", "")).strip()
+    pkg_weight  = str(product_detail.get("Weight (KG)", "")).strip()
+
     bullet_points = extract_bullet_points(description_plain)
-    material = ""
-    for tag in tags:
-        if tag.lower() in ["leather", "wood", "carbon", "inox", "polyester", "nylon", "rubber", "foam"]:
-            material = tag
-            break
 
-    size_value = extract_first_variant_size(product_detail.get("variants", []))
-    color_value = ""
-    for tag in tags:
-        if tag.lower() in ["red", "blue", "black", "white", "yellow", "green", "gray", "orange", "pink", "brown"]:
-            color_value = tag
-            break
-
+    # Build row — initialise all headers to ""
     row = {header: "" for header in AMAZON_HEADERS}
-    row.update({
-        "sku": str(product_detail.get("official_sku", "") or product_detail.get("sku", "") or ""),
-        "product-id": str(product_detail.get("official_sku", "") or ""),
-        "product-id-type": "ASIN" if product_detail.get("official_sku", "") else "",
-        "item-name": title,
-        "brand-name": brand,
-        "manufacturer": brand,
-        "item-type": item_type,
-        "feed_product_type": category or item_type,
-        "product-description": description_plain,
-        "search-terms": ", ".join([t.lower() for t in tags if t]),
-        "department": "Sports",
-        "sport-type": "Cricket",
-        "material-type": material,
-        "color": color_value,
-        "size": size_value,
-        "style-name": item_type or title,
-        "outer-material-type": material,
-        "price": str(price_value),
-        "quantity": "1",
-        "condition-type": "New",
-        "main-image-url": images[0] if images else "",
-        "other-image-url1": images[1] if len(images) > 1 else "",
-        "other-image-url2": images[2] if len(images) > 2 else "",
-        "other-image-url3": images[3] if len(images) > 3 else "",
-        "item-weight": str(product_detail.get("weight", "") or ""),
-        "item-weight-unit-of-measure": str(product_detail.get("weight_unit", "") or ""),
-        "item-package-dimensions": "",
-        "item-package-weight": "",
-        "country-of-origin": str(product_detail.get("country_of_origin", "") or ""),
-        "manufacturer-contact-information": "",
-        "update_delete": "Update",
-    })
 
-    for idx, bullet in enumerate(bullet_points, start=1):
-        row[f"bullet-point{idx}"] = bullet
+    # ── Core identity ────────────────────────────────────────────────────────
+    row["SKU"]                = sku
+    row["Product Id"]         = sku
+    row["Product Id Type"]    = "ASIN" if sku else ""
+    row["Item Name"]          = title
+    row["Brand Name"]         = brand
+    row["Model Name"]         = str(product_detail.get("model_name", "") or title).strip()
+    row["Model Number"]       = sku
+    row["Part Number"]        = sku or "NA"
+    row["Manufacturer"]       = manufacturer or brand
+
+    # ── Product type / category ──────────────────────────────────────────────
+    row["Item Type Name"]     = item_type
+    row["Style"]              = item_type or title
+    row["Department Name"]    = "Sports"
+
+    # ── Description & keywords ───────────────────────────────────────────────
+    row["Product Description"] = description_plain
+    row["Bullet Point"]       = bullet_points[0] if bullet_points else ""
+    row["_bullet_points"]     = bullet_points  # consumed by amazon_step
+
+    row["Generic Keywords"]   = ", ".join([t.lower() for t in tags if t])
+    row["Special Features"]   = "; ".join(bullet_points[1:4]) if len(bullet_points) > 1 else ""
+
+    # ── Sport / cricket-specific ─────────────────────────────────────────────
+    row["Sport Type"]              = sport_type
+    row["Sport Bat Willow Type"]   = blade_material   # "English Willow" / "Kashmir Willow"
+    row["Bat Construction"]        = "Hand Crafted" if blade_material == "English Willow" else "Machine Made"
+    row["Skill Level"]             = playing_level or ("Advanced" if size_value in ("Short Handle", "Long Handle", "Harrow") else "Intermediate")
+    row["Grip Type"]               = handle_grip
+    row["Handle Material"]         = handle_mat
+    row["Recommended Uses For Product"] = "Cricket"
+
+    # ── Physical attributes ───────────────────────────────────────────────────
+    row["Material"]           = material
+    row["Color"]              = color_value
+    row["Size"]               = size_value
+    row["Item Weight"]        = weight_range
+    row["Item Weight Unit"]   = "grams" if weight_range else ""
+
+    # Package dims (cm → need unit cols)
+    row["Item Package Length"]  = pkg_length
+    row["Package Length Unit"]  = "centimeters" if pkg_length else ""
+    row["Item Package Width"]   = pkg_breadth
+    row["Package Width Unit"]   = "centimeters" if pkg_breadth else ""
+    row["Item Package Height"]  = pkg_height
+    row["Package Height Unit"]  = "centimeters" if pkg_height else ""
+    row["Package Weight"]       = pkg_weight
+    row["Package Weight Unit"]  = "kilograms" if pkg_weight else ""
+
+    # ── Images ────────────────────────────────────────────────────────────────
+    row["Main Image URL"]      = images[0] if images else ""
+    row["Main Image Location"] = images[0] if images else ""
+    row["Other Image URL"]     = images[1] if len(images) > 1 else ""
+    row["Other Image Location"]= images[1] if len(images) > 1 else ""
+    row["_extra_images"]       = images     # consumed by amazon_step for all slots
+
+    # ── Pricing ───────────────────────────────────────────────────────────────
+    row["Your Price INR (Sell on Amazon, IN)"]       = str(price_value) if price_value else ""
+    row["Maximum Retail Price (Sell on Amazon, IN)"] = str(price_value) if price_value else ""
+
+    # ── Fulfilment / inventory ────────────────────────────────────────────────
+    row["Quantity (IN)"]               = "1"
+    row["Fulfillment Channel Code (IN)"]= "DEFAULT"
+    row["Handling Time (IN)"]          = "3"
+    row["Item Condition"]              = "New"
+
+    # ── Compliance / origin ───────────────────────────────────────────────────
+    row["Country of Origin"]              = country
+    row["Manufacturer Contact Information"]= manufacturer or brand
+    row["Importer Contact Information"]   = manufacturer or brand
+    row["Packer Contact Information"]     = "Twenty2Yards The Milange Jakat Naka Virar West"
+    row["Warranty Description"]           = warranty_text
 
     return row
 
@@ -461,9 +527,8 @@ async def amazon_step(state):
     try:
         file_path = state.get("file_path", "")
         filename = state.get("filename", "")
-        logging.info(f"[amazon_agent] amazon_step start file={filename} path={file_path} user_id={state.get('user_id')}")
+        logging.info(f"[amazon_agent] amazon_step start file={filename} path={file_path}")
         if not os.path.exists(file_path):
-            logging.error(f"[amazon_agent] file not found path={file_path}")
             return {"status": 404, "message": "File not found..."}
 
         file_extension = os.path.splitext(filename)[1].lower()
@@ -478,7 +543,7 @@ async def amazon_step(state):
 
         input_rows = file_info.to_dict(orient="records")
         predata_records = load_predata_records(PREDATA_DIR)
-        logging.info(f"[amazon_agent] loaded {len(input_rows)} rows from {filename}, predata_records={len(predata_records)}")
+        logging.info(f"[amazon_agent] loaded {len(input_rows)} rows, predata={len(predata_records)}")
 
         product_entries = []
         titles_to_scrape = []
@@ -487,7 +552,6 @@ async def amazon_step(state):
             title = extract_input_title(row)
             if not title:
                 continue
-
             entry = {
                 "title": title,
                 "source": "predata",
@@ -495,87 +559,139 @@ async def amazon_step(state):
             }
             if entry["detail"] is None:
                 entry["source"] = "scrape_pending"
-                # Clean abbreviations before passing to scraper
                 cleaned_title = clean_title_for_scraper(title)
                 titles_to_scrape.append(cleaned_title)
-                logging.info(f"[amazon_agent] will scrape title='{title}' (cleaned: '{cleaned_title}')")
-            else:
-                logging.info(f"[amazon_agent] matched predata for title='{title}'")
-
             product_entries.append(entry)
+            
+
+        if len(product_entries) > 10:
+            logging.warning(
+                f"[amazon_agent] too many products: {len(product_entries)} titles"
+            )
+            state['message'] = f"You have more than 10 products in the uploaded file. Please upload fewer than 10 products to get product details from online."
+            return {
+                "status": 400,
+                "message": "You have more than 10 products. Please upload fewer than 10 products to get product details from online."
+            }
 
         scraped_rows = []
         if titles_to_scrape:
-            logging.info(f"[amazon_agent] looking up {len(titles_to_scrape)} titles via scraper")
             scraped_rows = await get_multi_source_product_pages(titles_to_scrape, format_type="amazon")
-            logging.info(f"[amazon_agent] scraper returned {len(scraped_rows)} amazon rows")
-            for i, row in enumerate(scraped_rows):
-                logging.info(f"[amazon_agent] scraped_row[{i}]: title='{row.get('item-name', 'N/A')}' brand='{row.get('brand-name', 'N/A')}' price='{row.get('price', 'N/A')}'")
-        else:
-            logging.info(f"[amazon_agent] no titles to scrape")
 
         scrape_index = 0
         for entry in product_entries:
             if entry["detail"] is not None:
                 amazon_rows = await format_products([entry["detail"]], "amazon")
                 amazon_row = amazon_rows[0] if amazon_rows else {}
-                # Always use original input title, not the predata title
-                amazon_row["item-name"] = expand_willow_abbreviations(entry["title"])
+                amazon_row["Item Name"] = expand_willow_abbreviations(entry["title"])
                 entry["amazon_row"] = amazon_row
                 entry["source"] = "predata_formatted"
-                predata_file = entry["detail"].get("_predata_file", "")
-                logging.info(f"[amazon_agent] product='{entry['title']}' source=predata_formatted file={predata_file}")
             else:
                 if scrape_index < len(scraped_rows):
-                    scraped_row = dict(scraped_rows[scrape_index])  # copy, never mutate original
-                    scraped_title = scraped_row.get("item-name", "")
-                    original_title = entry["title"]
-
-                    # Always restore original input title — scraper may return wrong product name
-                    correct_title = expand_willow_abbreviations(entry["title"])
-                    if scraped_title != correct_title:
-                        logging.info(
-                            f"[amazon_agent] title override: scraped='{scraped_title}' → '{correct_title}'"
-                        )
-                    scraped_row["item-name"] = correct_title
-
+                    scraped_row = dict(scraped_rows[scrape_index])
+                    scraped_row["Item Name"] = expand_willow_abbreviations(entry["title"])
                     entry["amazon_row"] = scraped_row
                     entry["source"] = "scraped"
-                    logging.info(f"[amazon_agent] product='{original_title}' source=scraped")
                 else:
-                    # fallback - create a more complete row with defaults
-                    fallback_title = entry["title"]
                     fallback_detail = {
-                        "Title": fallback_title,
-                        "brand": "SS" if fallback_title.upper().startswith("SS ") else "",
-                        "category": "Cricket Bat" if "bat" in fallback_title.lower() else "Cricket Equipment",
-                        "type": "Cricket Bat" if "bat" in fallback_title.lower() else "",
-                        "description": f"High-quality cricket equipment: {fallback_title}",
-                        "images": [],
-                        "tags": ["cricket"],
-                        "price": "",
-                        "variants": []
+                        "Title": entry["title"],
+                        "brand": "SS" if entry["title"].upper().startswith("SS ") else "",
+                        "category": "Cricket Bat" if "bat" in entry["title"].lower() else "Cricket Equipment",
+                        "type": "Cricket Bat" if "bat" in entry["title"].lower() else "",
+                        "description": f"High-quality cricket equipment: {entry['title']}",
+                        "images": [], "tags": ["cricket"], "price": "", "variants": []
                     }
                     fallback_rows = await format_products([fallback_detail], "amazon")
                     entry["amazon_row"] = fallback_rows[0] if fallback_rows else {}
                     entry["source"] = "fallback"
-                    logging.warning(f"[amazon_agent] no data found for title='{entry['title']}', using enhanced fallback row")
-                    logging.info(f"[amazon_agent] product='{entry['title']}' source=fallback")
                 scrape_index += 1
 
-        logging.info(f"[amazon_agent] total product_entries={len(product_entries)}")
-        output_file = os.path.join(UPDATED_DIR, f"{filename_no_ext}_amazon.xlsx")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        output_file = os.path.join(
+            UPDATED_DIR,
+            f"{filename_no_ext}_amazon_{timestamp}.xlsx"
+        )
         wb = Workbook(write_only=True)
         ws = wb.create_sheet(title="Amazon Products")
         ws.append(AMAZON_HEADERS)
+        # open DB connection for upserts
+        conn = connect_db(HOSTNAME, USERNAME, PASSWORD, DATABASE)
 
         for entry in product_entries:
             amazon_row = entry.get("amazon_row", {})
-            ws.append([amazon_row.get(h, "") for h in AMAZON_HEADERS])
+            extra_images  = amazon_row.pop("_extra_images", [])
+            bullet_points = amazon_row.pop("_bullet_points", [])
+
+            # Build the output row respecting AMAZON_HEADERS order and duplicates
+            bullet_idx  = 0
+            img_url_idx = 1   # index into extra_images for "Other Image URL" slots
+            img_loc_idx = 1   # index into extra_images for "Other Image Location" slots
+            sf_idx      = 0   # Special Features index
+
+            output_cells = []
+            for header in AMAZON_HEADERS:
+                if header == "Bullet Point":
+                    val = bullet_points[bullet_idx] if bullet_idx < len(bullet_points) else ""
+                    bullet_idx += 1
+                elif header == "Other Image URL":
+                    val = extra_images[img_url_idx] if img_url_idx < len(extra_images) else ""
+                    img_url_idx += 1
+                elif header == "Other Image Location":
+                    val = extra_images[img_loc_idx] if img_loc_idx < len(extra_images) else ""
+                    img_loc_idx += 1
+                elif header == "Special Features":
+                    bullets_tail = bullet_points[1:] if len(bullet_points) > 1 else []
+                    val = bullets_tail[sf_idx] if sf_idx < len(bullets_tail) else ""
+                    sf_idx += 1
+                else:
+                    val = amazon_row.get(header, "")
+                output_cells.append(val)
+
+            ws.append(output_cells)
+
+            # UPSERT into product_details
+            try:
+                def safe_float(v):
+                    if v in (None, ""):
+                        return None
+                    try:
+                        return float(str(v).replace(',', '').strip())
+                    except Exception:
+                        return None
+
+                product = {
+                    'marketplace': 'amazon',
+                    'marketplace_product_id': amazon_row.get('Product Id') or amazon_row.get('SKU') or '',
+                    'sku': amazon_row.get('SKU') or amazon_row.get('Product Id') or '',
+                    'title': amazon_row.get('Item Name'),
+                    'product_name': amazon_row.get('Item Name'),
+                    'description': amazon_row.get('Product Description'),
+                    'brand': amazon_row.get('Brand Name'),
+                    'manufacturer': amazon_row.get('Manufacturer'),
+                    'product_type': amazon_row.get('Item Type Name'),
+                    'category': amazon_row.get('Department Name'),
+                    'tags': amazon_row.get('Generic Keywords'),
+                    'mrp': safe_float(amazon_row.get('Maximum Retail Price (Sell on Amazon, IN)')),
+                    'selling_price': safe_float(amazon_row.get('Your Price INR (Sell on Amazon, IN)')),
+                    'currency': 'INR',
+                    'main_image_url': amazon_row.get('Main Image URL'),
+                    'other_image_url_1': amazon_row.get('Other Image URL') or '',
+                    'bullet_points': json.dumps(bullet_points) if bullet_points else None,
+                    'browse_nodes': amazon_row.get('Recommended Browse Nodes'),
+                    'extra_attributes': amazon_row,
+                }
+
+                upsert_product_details(conn, product)
+            except Exception as e:
+                logging.warning(f"[amazon_agent] upsert failed for sku={amazon_row.get('SKU')} error={e}")
 
         wb.save(output_file)
-        return {"status": 200, "output_file_path": output_file, "output_file_name": os.path.basename(output_file)}
+        if conn:
+            conn.close()
+        return {"status": 200, "output_file_path": output_file,
+                "output_file_name": os.path.basename(output_file)}
 
     except Exception as e:
-        logging.error(f"[amazon_agent] Error in amazon_step: {e}", exc_info=True)
+        logging.error(f"[amazon_agent] Error: {e}", exc_info=True)
         return {"status": 500, "message": str(e)}

@@ -1,9 +1,9 @@
 {
-  "access_token": "1000.4df6a1084d8806ca7a4960895008a7be.b99b4b5107604ec27f811063f3078081",
+  "access_token": "1000.eda544a202446c674cc995970dd7fb15.5eb4a6358c270c931cc904aef190b3e8",
   "scope": "ZohoInventory.items.READ",
   "api_domain": "https://www.zohoapis.in",
   "token_type": "Bearer",
   "expires_in": 3600,
   "refresh_token": "1000.b6ed850732988bbb3b322f547f8c3e15.801f689e059e2d99ddab8fed00e0c984",
-  "created_at": 1779084812
+  "created_at": 1779262434
 }

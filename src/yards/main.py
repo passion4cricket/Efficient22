@@ -1,7 +1,8 @@
 import asyncio
+import importlib
 import json
 import uuid
-from fastapi import FastAPI, File, UploadFile, Request
+from fastapi import FastAPI, File, UploadFile, Request, Form
 from fastapi.responses import FileResponse, StreamingResponse
 from pathlib import Path
 import sys, os
@@ -22,6 +23,40 @@ else:
 from yards.utils.config import set_env_path, CONNECTED_CLIENTS
 
 CLIENTS_LOCK = asyncio.Lock()
+
+
+def set_api_tokens_in_env(groq_token: str | None = None, serper_token: str | None = None):
+    if groq_token:
+        os.environ["GROQ_API_KEY"] = groq_token
+    if serper_token:
+        os.environ["SERPER_API_KEY"] = serper_token
+
+    # Refresh already-imported modules that cache API keys / LLM clients.
+    modules_to_refresh = [
+        "yards.utils.utils",
+        "yards.utils.scrape_data",
+        "yards.agents.discovery_agent",
+        "yards.agents.amazon_agent",
+        "yards.agents.flipkart_agent",
+        "yards.agents.productname_compare_agent",
+    ]
+
+    for module_name in modules_to_refresh:
+        module = sys.modules.get(module_name)
+        if module is None:
+            continue
+
+        try:
+            if groq_token and hasattr(module, "GROQ_API_KEY"):
+                setattr(module, "GROQ_API_KEY", groq_token)
+            if serper_token and hasattr(module, "SERPER_API_KEY"):
+                setattr(module, "SERPER_API_KEY", serper_token)
+
+            if hasattr(module, "llm_init"):
+                module.llm, module.prompt = module.llm_init()
+        except Exception:
+            pass
+
 
 async def register_client(state_cls):
     client_id = str(uuid.uuid4())
@@ -53,6 +88,7 @@ from yards.graphs.discovery_graph import discovery_graph, DiscoveryState
 from yards.graphs.compare_graph import compare_graph, CompareState
 from yards.graphs.productname_compare_graph import productname_graph, ProductNameCompareState
 from yards.graphs.amazon_graph import amazon_graph, AmazonState
+from yards.graphs.flipkart_graph import flipkart_graph, FlipkartState
 
 UPLOAD_DIR = os.path.join("uploads", "original_files")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -80,9 +116,16 @@ app.add_middleware(
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @app.post("/shopify")
-async def generate_shopify_format(file: UploadFile = File(...), request: Request = None):
+async def generate_shopify_format(
+    file: UploadFile = File(...),
+    request: Request = None,
+    groq_token: str | None = Form(None),
+    serper_token: str | None = Form(None),
+):
     origin = f"{request.client.host}:{request.client.port}" if request and request.client else "unknown"
     client_id, state = await register_client(DiscoveryState)
+    print(f"groq_token: {groq_token}, serper_token: {serper_token}")
+
 
     try:
         filename = file.filename
@@ -97,7 +140,10 @@ async def generate_shopify_format(file: UploadFile = File(...), request: Request
         state["file_path"] = file_path
         state["filename"] = filename
         state["region"] = ""
+        state["groq_token"] = groq_token
+        state["serper_token"] = serper_token
 
+        set_api_tokens_in_env(groq_token=groq_token, serper_token=serper_token)
         config = {"configurable": {"thread_id": client_id}}
         state = await discovery_graph.ainvoke(state, config=config)
         await update_client_state(client_id, state)
@@ -112,9 +158,16 @@ async def generate_shopify_format(file: UploadFile = File(...), request: Request
 
 
 @app.post("/amazon")
-async def generate_amazon_format(file: UploadFile = File(...), request: Request = None):
+async def generate_amazon_format(
+    file: UploadFile = File(...),
+    request: Request = None,
+    groq_token: str | None = Form(None),
+    serper_token: str | None = Form(None),
+):
     origin = f"{request.client.host}:{request.client.port}" if request and request.client else "unknown"
     client_id, state = await register_client(AmazonState)
+    print(f"groq_token: {groq_token}, serper_token: {serper_token}")
+
 
     logging.info(f"[upload_amazon] Entered client_id={client_id} origin={origin}")
     try:
@@ -130,7 +183,10 @@ async def generate_amazon_format(file: UploadFile = File(...), request: Request 
         state["file_path"] = file_path
         state["filename"] = filename
         state["region"] = ""
+        state["groq_token"] = groq_token
+        state["serper_token"] = serper_token
 
+        set_api_tokens_in_env(groq_token=groq_token, serper_token=serper_token)
         config = {"configurable": {"thread_id": client_id}}
         state = await amazon_graph.ainvoke(state, config=config)
         await update_client_state(client_id, state)
@@ -145,13 +201,61 @@ async def generate_amazon_format(file: UploadFile = File(...), request: Request 
         await unregister_client(client_id)
 
 
+@app.post("/flipkart")
+async def generate_flipkart_format(
+    file: UploadFile = File(...),
+    request: Request = None,
+    groq_token: str | None = Form(None),
+    serper_token: str | None = Form(None),
+):
+    origin = f"{request.client.host}:{request.client.port}" if request and request.client else "unknown"
+    client_id, state = await register_client(FlipkartState)
+    print(f"groq_token: {groq_token}, serper_token: {serper_token}")
+
+
+    logging.info(f"[upload_flipkart] Entered client_id={client_id} origin={origin}")
+    try:
+        filename = file.filename
+        unique_filename = f"{client_id}_{filename}"
+        file_path = os.path.join(UPLOAD_DIR, unique_filename)
+        logging.info(f"[upload_flipkart] Received file: {filename} from {origin}, saving to: {file_path}")
+
+        with open(file_path, "wb") as f:
+            f.write(await file.read())
+
+        state["user_id"] = client_id
+        state["file_path"] = file_path
+        state["filename"] = filename
+        state["region"] = ""
+        state["groq_token"] = groq_token
+        state["serper_token"] = serper_token
+
+        set_api_tokens_in_env(groq_token=groq_token, serper_token=serper_token)
+        config = {"configurable": {"thread_id": client_id}}
+        state = await flipkart_graph.ainvoke(state, config=config)
+        await update_client_state(client_id, state)
+        logging.info(f"[upload_flipkart] Completed client_id={client_id} output_keys={list(state.keys())}")
+        return state
+
+    except Exception as e:
+        logging.error(f"[upload_flipkart] Failed client_id={client_id} error={e}", exc_info=True)
+        return {"status": 500, "message": str(e)}
+
+    finally:
+        await unregister_client(client_id)
+
+
 @app.post("/comparison")
 async def compare_fields(
     request: Request,
     file1: UploadFile = File(...),
     file2: UploadFile = File(...),
+    groq_token: str | None = Form(None),
+    serper_token: str | None = Form(None),
 ):
+    print(f"groq_token: {groq_token}, serper_token: {serper_token}")
     origin = f"{request.client.host}:{request.client.port}" if request and request.client else "unknown"
+    set_api_tokens_in_env(groq_token=groq_token, serper_token=serper_token)
     save_dir = "uploads/compare_files"
     os.makedirs(save_dir, exist_ok=True)
 
@@ -187,14 +291,19 @@ async def compare_fields(
 async def productname_compare(request: Request):
     body = await request.json()
     e22_access_token = body.get("e22_access_token")
+    groq_token = body.get("groq_token")
+    serper_token = body.get("serper_token")
     origin = f"{request.client.host}:{request.client.port}" if request and request.client else "unknown"
 
+    set_api_tokens_in_env(groq_token=groq_token, serper_token=serper_token)
     client_id, state = await register_client(ProductNameCompareState)
     logging.info(f"[productname_compare] Entered client_id={client_id} origin={origin}")
 
     try:
         state["user_id"] = client_id
         state["e22_access_token"] = e22_access_token
+        state["groq_token"] = groq_token
+        state["serper_token"] = serper_token
 
         config = {"configurable": {"thread_id": client_id}}
         state = await productname_graph.ainvoke(state, config=config)
