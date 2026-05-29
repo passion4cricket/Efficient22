@@ -1338,7 +1338,7 @@ _CRICKET_VOCAB = [
     "smith", "maxwell", "stoinis",
     "thala", "captain", "finisher", "gladiator", "slasher", "stunner",
     "destroyer", "smacker", "striker", "blaster", "titan", "magnum",
-    "natwest", "ipl", "odi", "t20", "ranjji", "duleep",
+    "natwest", "ipl", "odi", "t20", "ranjji", "duleep", "klaasen"
 ]
 _spell.word_frequency.load_words(_CRICKET_VOCAB)
 
@@ -2305,6 +2305,43 @@ def build_flipkart_row(product_detail: dict) -> dict:
 #  FORMAT PRODUCTS
 # =============================================================================
 
+def _trim_flipkart_input_for_llm(product_detail: dict) -> dict:
+    """Keep only the essential fields for Flipkart LLM formatting prompts."""
+    if not isinstance(product_detail, dict):
+        return product_detail
+
+    keys_to_keep = [
+        "Title", "title", "brand", "description", "Body HTML", "images", "tags",
+        "Size", "Color", "Blade Material", "Sport Type", "Age Group", "Ideal For",
+        "Playing Level", "Bat Grade", "Weight Range", "Cover Included",
+        "Manufacturer Details", "Series", "Curve", "Designed For", "Suitable For",
+        "Anti-Scuff Sheet", "Toe Guard", "Handle Type", "Handle Grip Type",
+        "Handle Material", "Other Body Features", "Domestic Warranty", "Warranty Summary",
+        "EAN/UPC", "Length (CM)", "Breadth (CM)", "Height (CM)", "Weight (KG)",
+        "MRP (INR)", "Your selling price (INR)", "HSN", "Stock",
+        "Weight Range - Measuring Unit", "Part Number", "Main Image URL",
+        "Other Image URL 1", "Other Image URL 2", "Other Image URL 3", "Other Image URL 4",
+    ]
+
+    trimmed = {}
+    for key in keys_to_keep:
+        if key in product_detail:
+            trimmed[key] = product_detail[key]
+
+    for text_key in ("description", "Body HTML"):
+        if isinstance(trimmed.get(text_key, ""), str):
+            if len(trimmed[text_key]) > 2000:
+                trimmed[text_key] = trimmed[text_key][:2000] + "..."
+
+    return trimmed
+
+
+def _should_skip_flipkart_llm(user_prompt: str, max_chars: int = 15000) -> bool:
+    if len(user_prompt) > max_chars:
+        return True
+    return False
+
+
 async def format_products(products, format_type, groq_api_key=None, serper_api_key=None):
     local_llm, local_prompt = _get_llm_prompt(groq_api_key)
 
@@ -2563,6 +2600,9 @@ async def format_products(products, format_type, groq_api_key=None, serper_api_k
                         if _is_empty(flipkart_row.get(f, ""))
                     )
 
+                    trimmed_enriched_detail = _trim_flipkart_input_for_llm(enriched_detail)
+                    enriched_detail_json = json.dumps(trimmed_enriched_detail, ensure_ascii=False)
+
                     user_prompt = f"""
                        You are an expert product data builder for Flipkart bulk uploads,
                        specializing in Cricket Bats and Sports equipment.
@@ -2652,7 +2692,7 @@ async def format_products(products, format_type, groq_api_key=None, serper_api_k
                        - "Weight (KG)": Shipping weight in kg (product + packaging).
 
                        --------------------------------------------------
-                       Input product data: {enriched_detail}
+                       Input product data: {enriched_detail_json}
                     """
 
                     sys_prompt = (
@@ -2660,40 +2700,43 @@ async def format_products(products, format_type, groq_api_key=None, serper_api_k
                         "Return ONLY a valid JSON object matching the requested fields."
                     )
 
-                    try:
-                        extractor_response = await call_llm(local_llm, local_prompt, sys_prompt, user_prompt)
-                        raw_json = extractor_response.content.strip()
-
+                    if _should_skip_flipkart_llm(user_prompt):
+                        print("⚠️ Flipkart LLM prompt too large; skipping LLM formatting and using pre-extracted fields.")
+                    else:
                         try:
-                            raw_json_sanitized = sanitize_json(raw_json)
-                            llm_data = json.loads(raw_json_sanitized)
-                        except json.JSONDecodeError as json_err:
-                            try:
-                                import ast
-                                llm_data = ast.literal_eval(raw_json_sanitized)
-                            except Exception:
-                                try:
-                                    llm_data = json.loads(raw_json)
-                                except Exception:
-                                    print(f"⚠️ Flipkart LLM JSON parse failed on line {json_err.lineno} col {json_err.colno}: {json_err.msg}")
-                                    print(f"   Raw output (first 300 chars): {raw_json[:300]}")
-                                    raise
+                            extractor_response = await call_llm(local_llm, local_prompt, sys_prompt, user_prompt)
+                            raw_json = extractor_response.content.strip()
 
-                        if isinstance(llm_data, dict):
-                            protected = {
-                                "Blade Material", "Size", "Age Group", "Ideal For",
-                                "Playing Level", "Bat Grade", "Weight Range",
-                                "Sport Type", "Color", "Brand", "Manufacturer Details",
-                                "MRP (INR)", "Your selling price (INR)", "Main Image URL",
-                            }
-                            for key, val in llm_data.items():
-                                if key in FLIPKART_HEADERS and val not in (None, "", [], {}):
-                                    if key in protected and not _is_empty(flipkart_row.get(key, "")):
-                                        continue
-                                    flipkart_row[key] = str(val).strip()
-                    except Exception as e:
-                        print(f"⚠️ Flipkart LLM formatting failed (non-critical): {e}")
-                        print(f"   Proceeding with pre-extracted fields for product: {product_name}")
+                            try:
+                                raw_json_sanitized = sanitize_json(raw_json)
+                                llm_data = json.loads(raw_json_sanitized)
+                            except json.JSONDecodeError as json_err:
+                                try:
+                                    import ast
+                                    llm_data = ast.literal_eval(raw_json_sanitized)
+                                except Exception:
+                                    try:
+                                        llm_data = json.loads(raw_json)
+                                    except Exception:
+                                        print(f"⚠️ Flipkart LLM JSON parse failed on line {json_err.lineno} col {json_err.colno}: {json_err.msg}")
+                                        print(f"   Raw output (first 300 chars): {raw_json[:300]}")
+                                        raise
+
+                            if isinstance(llm_data, dict):
+                                protected = {
+                                    "Blade Material", "Size", "Age Group", "Ideal For",
+                                    "Playing Level", "Bat Grade", "Weight Range",
+                                    "Sport Type", "Color", "Brand", "Manufacturer Details",
+                                    "MRP (INR)", "Your selling price (INR)", "Main Image URL",
+                                }
+                                for key, val in llm_data.items():
+                                    if key in FLIPKART_HEADERS and val not in (None, "", [], {}):
+                                        if key in protected and not _is_empty(flipkart_row.get(key, "")):
+                                            continue
+                                        flipkart_row[key] = str(val).strip()
+                        except Exception as e:
+                            print(f"⚠️ Flipkart LLM formatting failed (non-critical): {e}")
+                            print(f"   Proceeding with pre-extracted fields for product: {product_name}")
 
                 product_type = _detect_product_type(
                     f"{product_name} {flipkart_row.get('Blade Material', '')}"

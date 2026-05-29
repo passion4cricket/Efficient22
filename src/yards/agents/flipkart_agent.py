@@ -14,6 +14,47 @@ from yards.database.get_table_details import connect_db, upsert_product_details
 PREDATA_DIR = os.path.join("uploads", "predata")
 PREDATA_EXTENSIONS = {".csv", ".xlsx", ".xls"}
 
+# ── SKU Master sheet name ─────────────────────────────────────────────────────
+SKU_MASTER_FILENAME = "22Y_SKU Master_New Updated_26th May 2026"
+
+# ── Fields to pull from SKU Master (Flipkart header name → possible SKU Master column names) ──
+SKU_MASTER_FIELD_MAP = {
+    "Seller SKU ID":            ["Seller SKU ID", "SKU ID", "SKU", "sku", "seller_sku_id", "SKU ID for Market Places"],
+    "Your selling price (INR)": ["Your selling price (INR)", "Selling Price", "selling_price", "Sale Price", "MRP", "MRP (INR)"],
+    "Stock":                    ["Stock", "stock", "Quantity", "quantity"],
+    "Length (CM)":              ["Length (CM)", "Length", "length", "length_cm", "L"],
+    "Breadth (CM)":             ["Breadth (CM)", "Breadth", "breadth", "breadth_cm", "W"],
+    "Height (CM)":              ["Height (CM)", "Height", "height", "height_cm", "H"],
+    "Weight (KG)":              ["Weight (KG)", "Weight", "weight", "weight_kg", "Product weight (Per PC)"],
+    "HSN":                      ["HSN", "hsn", "HSN Code", "hsn_code", "HSN/SAC"],
+    "Manufacturer Details":     ["Manufacturer Details", "Manufacturer", "manufacturer", "Vendor Name", "Brand Name"],
+    "Tax Code":                 ["Tax Code", "tax_code", "Tax", "Tax %"],
+    "Brand":                    ["Brand", "brand", "Brand Name"],
+    "Model Name":               ["Model Name", "model_name", "Title", "Product Name", "Product name in PI", "Name On Brand WebSite", "Product Description on Invoice"],
+    "Weight Range":             ["Weight Range", "weight_range", "Weight", "Product weight (Per PC)"],
+    "Color":                    ["Color", "color", "Colour", "colour", "Colour"],
+    "Width":                    ["Width", "width", "W"],
+    "Height":                   ["Height", "height", "H"],
+    "Depth":                    ["Depth", "depth"],
+}
+
+# ── Default values for specific Flipkart fields ───────────────────────────────
+FLIPKART_DEFAULTS = {
+    "Listing Status":                   "Active",
+    "Fullfilment by":                   "Seller",
+    "Procurement type":                 "domestic procurement",
+    "Procurement SLA (DAY)":            "5",
+    "Shipping provider":                "Flipkart",
+    "Country Of Origin":                "India",
+    "Packer Details":                   "Twenty2Yards The Milange Jakat Naka Virar West",
+    "Minimum Order Quantity (MinOQ)":   "1",
+    "Weight Range - Measuring Unit":    "g",
+    "Sport Type":                       "Cricket",
+    "Width - Measuring Unit":           "inch",
+    "Height - Measuring Unit":          "inch",
+    "Depth - Measuring Unit":           "inch",
+}
+
 # ── Common cricket/sports equipment plural → singular normalization ───────────
 EQUIPMENT_PLURAL_MAP = {
     "bats": "bat", "gloves": "glove", "pads": "pad",
@@ -50,18 +91,6 @@ def parse_list_field(value) -> list[str]:
     return [p.strip() for p in re.split(r",|;|\n|\r", text) if p.strip()]
 
 
-# =============================================================================
-#  BUG 1 + BUG 2 FIX: normalize_predata_row
-#  ─────────────────────────────────────────
-#  BUG 1: Now reads ALL Flipkart column names directly (blade material, size,
-#          age group, weight range, manufacturer details, HSN, etc.).
-#          Previously these fields were silently dropped even when the predata
-#          file was a prior Flipkart export.
-#  BUG 2: Price is now mapped to both "price" AND "MRP (INR)" / "Your selling
-#          price (INR)" so build_flipkart_row can read it without relying on
-#          _extract_inr_price matching a currency symbol.
-# =============================================================================
-
 def _coerce_price(val) -> str:
     """Return a plain numeric string for a price value, or empty string."""
     if val is None:
@@ -69,17 +98,176 @@ def _coerce_price(val) -> str:
     s = str(val).strip()
     if not s:
         return ""
-    # Strip currency symbols and whitespace
     s = re.sub(r"[₹$£€\s,]", "", s)
-    # Extract a number
     m = re.search(r"\d[\d.]*", s)
     return m.group(0) if m else ""
+
+
+# =============================================================================
+#  SKU MASTER LOADER
+#  Loads the SKU Master excel sheet and returns a list of dicts.
+# =============================================================================
+
+def load_sku_master_records(predata_dir: str) -> list[dict]:
+    """
+    Loads records from the SKU Master excel file.
+    Looks for a file whose name (without extension) matches SKU_MASTER_FILENAME.
+    Returns a list of row dicts, or empty list if not found.
+    """
+    if not os.path.isdir(predata_dir):
+        logging.warning(f"[flipkart_agent] predata_dir not found: {predata_dir}")
+        return []
+
+    for filename in os.listdir(predata_dir):
+        name_no_ext = os.path.splitext(filename)[0].strip()
+        ext = os.path.splitext(filename)[1].lower()
+        if ext not in (".xlsx", ".xls"):
+            continue
+        if name_no_ext.lower() != SKU_MASTER_FILENAME.lower():
+            continue
+
+        path = os.path.join(predata_dir, filename)
+        try:
+            sheets = pd.read_excel(path, sheet_name=None, dtype=str)
+            rows = []
+            for sheet_name, sheet_df in sheets.items():
+                sheet_rows = sheet_df.fillna("").to_dict(orient="records")
+                rows.extend(sheet_rows)
+            logging.info(
+                f"[flipkart_agent] SKU Master loaded: {filename}, "
+                f"total rows={len(rows)}, "
+                f"columns={list(pd.DataFrame(rows).columns[:8]) if rows else []}"
+            )
+            return rows
+        except Exception as e:
+            logging.warning(f"[flipkart_agent] Failed to load SKU Master {filename}: {e}")
+            return []
+
+    logging.warning(
+        f"[flipkart_agent] SKU Master file not found in {predata_dir}. "
+        f"Expected filename (without ext): '{SKU_MASTER_FILENAME}'"
+    )
+    return []
+
+
+def _resolve_column(row: dict, candidates: list[str]) -> str:
+    """Return the first non-empty value from row for any of the candidate column names."""
+    for col in candidates:
+        val = str(row.get(col, "")).strip()
+        if val:
+            return val
+    return ""
+
+
+def find_sku_master_entry(title: str, sku_master_records: list[dict]) -> dict | None:
+    """
+    Fuzzy-match the given title against SKU Master product name column.
+    Returns the matched row dict (raw), or None if no match found.
+    Uses the same fuzzy logic as find_predata_entry.
+    """
+    if not sku_master_records:
+        return None
+
+    normalized_title = normalize_title(title)
+
+    # Determine which column holds the product name in SKU Master
+    name_col_candidates = [
+        "Model Name", "model_name", "Title", "title",
+        "Product Name", "product_name", "Product name in PI",
+        "Name", "name",
+        "Name On Brand WebSite", "Product Description on Invoice",
+    ]
+
+    candidates = []
+    rows = []
+
+    for raw_row in sku_master_records:
+        raw_candidate = _resolve_column(raw_row, name_col_candidates)
+        candidate = normalize_title(raw_candidate)
+        candidates.append(candidate)
+        rows.append(raw_row)
+
+        # Exact match fast-path
+        if candidate == normalized_title:
+            logging.info(
+                f"[flipkart_agent] SKU Master EXACT match: '{title}' → '{raw_candidate}'"
+            )
+            return raw_row
+
+    if not any(candidates):
+        logging.warning(
+            f"[flipkart_agent] SKU Master: all candidates empty — "
+            f"columns={list(sku_master_records[0].keys())[:8] if sku_master_records else []}"
+        )
+        return None
+
+    best_match = process.extractOne(
+        normalized_title, candidates,
+        scorer=fuzz.token_set_ratio,
+        score_cutoff=75,
+    )
+
+    if best_match:
+        _, score, index = best_match
+        sort_score = fuzz.token_sort_ratio(normalized_title, candidates[index])
+        matched_raw = _resolve_column(rows[index], name_col_candidates)
+
+        logging.info(
+            f"[flipkart_agent] SKU Master fuzzy candidate: '{title}' → '{matched_raw}' "
+            f"(token_set={score:.1f}, token_sort={sort_score:.1f})"
+        )
+
+        if score >= 75 and sort_score >= 75:
+            logging.info(
+                f"[flipkart_agent] SKU Master FUZZY match accepted: '{title}' → '{matched_raw}'"
+            )
+            return rows[index]
+        else:
+            logging.info(
+                f"[flipkart_agent] SKU Master FUZZY match REJECTED "
+                f"(token_set={score:.1f}, token_sort={sort_score:.1f}): "
+                f"'{title}' vs '{matched_raw}'"
+            )
+
+    return None
+
+
+def apply_sku_master_fields(flipkart_row: dict, sku_row: dict) -> dict:
+    """
+    Overlays fields from the matched SKU Master row onto the flipkart_row.
+    Only overwrites if the SKU Master value is non-empty.
+    Also applies FLIPKART_DEFAULTS for fields not already set.
+    """
+    result = dict(flipkart_row)
+
+    # ── Fields from SKU Master ────────────────────────────────────────────────
+    for fk_header, col_candidates in SKU_MASTER_FIELD_MAP.items():
+        val = _resolve_column(sku_row, col_candidates)
+        if val:
+            result[fk_header] = val
+
+    # ── Default values (only if field is empty/missing) ───────────────────────
+    for fk_header, default_val in FLIPKART_DEFAULTS.items():
+        if not str(result.get(fk_header, "")).strip():
+            result[fk_header] = default_val
+
+    return result
+
+
+def apply_flipkart_defaults(flipkart_row: dict) -> dict:
+    """
+    Applies FLIPKART_DEFAULTS for fields not already set (used when no SKU Master match).
+    """
+    result = dict(flipkart_row)
+    for fk_header, default_val in FLIPKART_DEFAULTS.items():
+        if not str(result.get(fk_header, "")).strip():
+            result[fk_header] = default_val
+    return result
 
 
 def normalize_predata_row(raw_row: dict) -> dict:
     row = {str(k).strip(): v for k, v in raw_row.items()}
 
-    # ── Title ─────────────────────────────────────────────────────────────────
     title = str(
         row.get("Title") or row.get("title")
         or row.get("Model Name") or row.get("model_name")
@@ -87,14 +275,10 @@ def normalize_predata_row(raw_row: dict) -> dict:
         or row.get("product_name") or ""
     ).strip()
 
-    # ── Brand ─────────────────────────────────────────────────────────────────
     brand = str(row.get("Brand") or row.get("brand") or "").strip()
-
-    # ── Category / type ───────────────────────────────────────────────────────
     category = str(row.get("Category") or row.get("category") or "").strip()
     item_type = str(row.get("Type") or row.get("type") or row.get("item-type") or "").strip()
 
-    # ── Description / Body HTML ───────────────────────────────────────────────
     description = str(
         row.get("Description") or row.get("description")
         or row.get("Product Description") or row.get("product-description") or ""
@@ -104,13 +288,11 @@ def normalize_predata_row(raw_row: dict) -> dict:
         or description or ""
     ).strip()
 
-    # ── SKU ───────────────────────────────────────────────────────────────────
     official_sku = str(
         row.get("Seller SKU ID") or row.get("Official SKU")
         or row.get("SKU") or row.get("sku") or row.get("Part Number") or ""
     ).strip()
 
-    # ── BUG 2 FIX: Price — map to MRP (INR) explicitly ───────────────────────
     raw_price = (
         row.get("MRP (INR)") or row.get("mrp_inr") or row.get("mrp")
         or row.get("Price") or row.get("price")
@@ -120,10 +302,9 @@ def normalize_predata_row(raw_row: dict) -> dict:
         row.get("Your selling price (INR)") or row.get("selling_price")
         or row.get("Sale Price") or row.get("sale_price") or ""
     )
-    mrp_str          = _coerce_price(raw_price)
+    mrp_str           = _coerce_price(raw_price)
     selling_price_str = _coerce_price(selling_price_raw) or mrp_str
 
-    # ── Images ────────────────────────────────────────────────────────────────
     images = parse_list_field(
         row.get("Main Image URL") or row.get("Images") or row.get("Image Src")
         or row.get("images") or row.get("image_src") or ""
@@ -135,50 +316,41 @@ def normalize_predata_row(raw_row: dict) -> dict:
             other_images.append(v)
     all_images = images + other_images
 
-    # ── Tags ──────────────────────────────────────────────────────────────────
     tags = row.get("Tags") or row.get("tags") or row.get("Search Keywords") or ""
     if isinstance(tags, str):
         tags = [t.strip() for t in tags.split(",") if t.strip()]
 
-    # ── Weight ────────────────────────────────────────────────────────────────
     weight      = row.get("Weight Range") or row.get("Weight") or row.get("weight") or row.get("Variant Weight") or ""
     weight_unit = row.get("Weight Range - Measuring Unit") or row.get("Weight Unit") or row.get("weight_unit") or row.get("Variant Weight Unit") or ""
 
-    # ── Country of origin ─────────────────────────────────────────────────────
     country_of_origin = str(
         row.get("Country Of Origin") or row.get("Country of Origin")
         or row.get("country_of_origin") or "India"
     ).strip() or "India"
 
-    # ── Variants ──────────────────────────────────────────────────────────────
     variants = row.get("variants") or []
 
-    # ── BUG 1 FIX: Cricket / Flipkart-specific fields read directly ──────────
-    #   If the predata is a prior Flipkart export (or has matching column names),
-    #   these values are preserved and passed through to build_flipkart_row so
-    #   they are never re-extracted or lost.
-    blade_material     = str(row.get("Blade Material")     or row.get("blade_material")     or "").strip()
-    sport_type         = str(row.get("Sport Type")         or row.get("sport_type")          or "").strip()
-    size               = str(row.get("Size")               or row.get("size")                or "").strip()
-    age_group          = str(row.get("Age Group")          or row.get("age_group")           or "").strip()
-    ideal_for          = str(row.get("Ideal For")          or row.get("ideal_for")           or "").strip()
-    playing_level      = str(row.get("Playing Level")      or row.get("playing_level")       or "").strip()
-    bat_grade          = str(row.get("Bat Grade")          or row.get("bat_grade")           or "").strip()
-    cover_included     = str(row.get("Cover Included")     or row.get("cover_included")      or "").strip()
-    color              = str(row.get("Color")              or row.get("color")               or row.get("Colour") or "").strip()
-    manufacturer       = str(row.get("Manufacturer Details") or row.get("Manufacturer")     or row.get("manufacturer") or "").strip()
-    packer_details     = str(row.get("Packer Details")     or row.get("packer_details")      or "").strip()
-    hsn                = str(row.get("HSN")                or row.get("hsn")                 or "").strip()
-    tax_code           = str(row.get("Tax Code")           or row.get("tax_code")            or "").strip()
-    fulfillment_by     = str(row.get("Fullfilment by")     or row.get("fulfillment_by")      or "").strip()
-    width              = str(row.get("Width")              or row.get("width")               or "").strip()
-    height             = str(row.get("Height")             or row.get("height")              or "").strip()
-    depth              = str(row.get("Depth")              or row.get("depth")               or "").strip()
-    stock              = str(row.get("Stock")              or row.get("stock")               or "").strip()
-    listing_status     = str(row.get("Listing Status")     or row.get("listing_status")      or "").strip()
+    blade_material = str(row.get("Blade Material")     or row.get("blade_material")     or "").strip()
+    sport_type     = str(row.get("Sport Type")         or row.get("sport_type")          or "").strip()
+    size           = str(row.get("Size")               or row.get("size")                or "").strip()
+    age_group      = str(row.get("Age Group")          or row.get("age_group")           or "").strip()
+    ideal_for      = str(row.get("Ideal For")          or row.get("ideal_for")           or "").strip()
+    playing_level  = str(row.get("Playing Level")      or row.get("playing_level")       or "").strip()
+    bat_grade      = str(row.get("Bat Grade")          or row.get("bat_grade")           or "").strip()
+    cover_included = str(row.get("Cover Included")     or row.get("cover_included")      or "").strip()
+    color          = str(row.get("Color")              or row.get("color")               or row.get("Colour") or "").strip()
+    manufacturer   = str(row.get("Manufacturer Details") or row.get("Manufacturer")     or row.get("manufacturer") or "").strip()
+    packer_details = str(row.get("Packer Details")     or row.get("packer_details")      or "").strip()
+    hsn            = str(row.get("HSN")                or row.get("hsn")                 or "").strip()
+    tax_code       = str(row.get("Tax Code")           or row.get("tax_code")            or "").strip()
+    fulfillment_by = str(row.get("Fullfilment by")     or row.get("fulfillment_by")      or "").strip()
+    width          = str(row.get("Width")              or row.get("width")               or "").strip()
+    height         = str(row.get("Height")             or row.get("height")              or "").strip()
+    depth          = str(row.get("Depth")              or row.get("depth")               or "").strip()
+    stock          = str(row.get("Stock")              or row.get("stock")               or "").strip()
+    listing_status = str(row.get("Listing Status")     or row.get("listing_status")      or "").strip()
 
     product_detail = {
-        # ── Standard scraper keys ─────────────────────────────────────────
         "Title":                        title,
         "brand":                        brand,
         "category":                     category,
@@ -193,13 +365,9 @@ def normalize_predata_row(raw_row: dict) -> dict:
         "weight_unit":                  weight_unit,
         "country_of_origin":            country_of_origin,
         "variants":                     variants,
-
-        # ── BUG 2 FIX: Price mapped to Flipkart column names ──────────────
-        "price":                        mrp_str,          # scraper helper fallback
-        "MRP (INR)":                    mrp_str,          # Flipkart column — direct
+        "price":                        mrp_str,
+        "MRP (INR)":                    mrp_str,
         "Your selling price (INR)":     selling_price_str,
-
-        # ── BUG 1 FIX: All Flipkart cricket fields passed through ─────────
         "Blade Material":               blade_material,
         "Sport Type":                   sport_type,
         "Size":                         size,
@@ -220,8 +388,6 @@ def normalize_predata_row(raw_row: dict) -> dict:
         "Depth":                        depth,
         "Stock":                        stock,
         "Listing Status":               listing_status,
-
-        # ── Logging metadata ──────────────────────────────────────────────
         "_predata_file": row.get("_predata_file", ""),
     }
 
@@ -315,7 +481,6 @@ def normalize_title(text: str) -> str:
 
 
 def clean_title_for_scraper(text: str) -> str:
-    """Expand willow abbreviations before passing to scraper."""
     cleaned = expand_willow_abbreviations(str(text).strip())
     return re.sub(r"\s+", " ", cleaned).strip()
 
@@ -329,7 +494,6 @@ def extract_input_title(row: dict) -> str:
 
 
 def find_predata_entry(title: str, predata_records: list[dict]) -> dict | None:
-    """Find predata entry by title — exact match first, then fuzzy."""
     normalized_title = normalize_title(title)
     logging.info(f"[flipkart_agent] find_predata_entry: input='{title}' normalized='{normalized_title}'")
 
@@ -436,13 +600,6 @@ def extract_first_variant_size(variants) -> str:
 
 
 def _is_predata_complete(detail: dict) -> bool:
-    """
-    BUG 4 FIX (helper): Returns True when the predata entry already has all the
-    fields that would otherwise need a web scrape to fill.
-
-    If True, format_products() skips fetch_missing_data_from_official() so we
-    do not re-scrape products that already have complete information.
-    """
     has_description = bool(
         str(detail.get("description", "") or detail.get("Body HTML", "")).strip()
     )
@@ -485,17 +642,21 @@ async def flipkart_step(state):
 
         input_rows      = file_info.to_dict(orient="records")
         predata_records = load_predata_records(PREDATA_DIR)
+
+        # ── Load SKU Master ───────────────────────────────────────────────────
+        sku_master_records = load_sku_master_records(PREDATA_DIR)
         logging.info(
             f"[flipkart_agent] loaded {len(input_rows)} rows from {filename}, "
-            f"predata_records={len(predata_records)}"
+            f"predata_records={len(predata_records)}, "
+            f"sku_master_records={len(sku_master_records)}"
         )
 
         groq_api_key   = state.get("groq_token")   or os.getenv("GROQ_API_KEY")
         serper_api_key = state.get("serper_token")  or os.getenv("SERPER_API_KEY")
 
         product_entries   = []
-        titles_to_scrape  = []      # cleaned title strings for the scraper
-        scrape_title_map  = {}      # cleaned_title → entry index (BUG 3 fix anchor)
+        titles_to_scrape  = []
+        scrape_title_map  = {}
 
         for row in input_rows:
             title = extract_input_title(row)
@@ -511,7 +672,6 @@ async def flipkart_step(state):
             if entry["detail"] is None:
                 entry["source"]  = "scrape_pending"
                 cleaned_title    = clean_title_for_scraper(title)
-                # BUG 3 FIX: store the index so we can look up by title later
                 scrape_title_map[cleaned_title] = len(product_entries)
                 titles_to_scrape.append(cleaned_title)
                 logging.info(f"[flipkart_agent] will scrape title='{title}' (cleaned: '{cleaned_title}')")
@@ -519,7 +679,7 @@ async def flipkart_step(state):
                 logging.info(f"[flipkart_agent] matched predata for title='{title}'")
 
             product_entries.append(entry)
-        
+
             if len(product_entries) > 10:
                 logging.warning(
                     f"[flipkart_agent] too many products: {len(product_entries)} titles"
@@ -529,7 +689,7 @@ async def flipkart_step(state):
                     "status": 400,
                     "message": "You have more than 10 products. Please upload fewer than 10 products to get product details from online."
                 }
-            
+
         scraped_by_title: dict[str, dict] = {}
 
         if titles_to_scrape:
@@ -542,10 +702,6 @@ async def flipkart_step(state):
             )
             logging.info(f"[flipkart_agent] scraper returned {len(raw_scraped_rows)} flipkart rows")
 
-            # Map each returned row back to the title that produced it.
-            # get_multi_source_product_pages processes titles in order, so
-            # index N in the output corresponds to titles_to_scrape[N] — but
-            # only when the result is not None.  We skip None entries and log.
             scrape_result_index = 0
             for i, cleaned_title in enumerate(titles_to_scrape):
                 if scrape_result_index >= len(raw_scraped_rows):
@@ -558,8 +714,6 @@ async def flipkart_step(state):
                 scraped_row = raw_scraped_rows[scrape_result_index]
                 if scraped_row is None:
                     logging.warning(f"[flipkart_agent] scraper returned None for title='{cleaned_title}'")
-                    # do not advance result index — None means this title failed
-                    # and the next result belongs to the next title
                     scraped_by_title[cleaned_title] = None
                 else:
                     scraped_by_title[cleaned_title] = scraped_row
@@ -577,19 +731,10 @@ async def flipkart_step(state):
         for entry in product_entries:
 
             if entry["detail"] is not None:
-                # ── Predata path ──────────────────────────────────────────────
-                #
-                # BUG 4 FIX: Only call the full format_products pipeline (which
-                # triggers fetch_missing_data_from_official) when the predata
-                # entry is genuinely incomplete.  If it already has title,
-                # description, images, and price we call format_products with
-                # a flag that suppresses the web-scrape enrichment step.
-                #
                 detail = entry["detail"]
                 predata_file = detail.get("_predata_file", "")
 
                 if _is_predata_complete(detail):
-                    # Pass a sentinel so format_products can skip online fetch
                     detail["_skip_online_enrichment"] = True
                     logging.info(
                         f"[flipkart_agent] product='{entry['title']}' predata complete "
@@ -608,8 +753,6 @@ async def flipkart_step(state):
                     serper_api_key=serper_api_key,
                 )
                 flipkart_row = flipkart_rows[0] if flipkart_rows else {}
-
-                # Always use the original input title, not the predata title
                 flipkart_row["Model Name"] = expand_willow_abbreviations(entry["title"])
                 entry["flipkart_row"] = flipkart_row
                 entry["source"] = "predata_formatted"
@@ -619,17 +762,13 @@ async def flipkart_step(state):
                 )
 
             else:
-                # ── Scraped path ──────────────────────────────────────────────
-                #
-                # BUG 3 FIX: Look up by title, not by counter.
-                #
                 original_title = entry["title"]
                 cleaned_title  = clean_title_for_scraper(original_title)
                 scraped_row    = scraped_by_title.get(cleaned_title)
                 correct_title  = expand_willow_abbreviations(original_title)
 
                 if scraped_row is not None:
-                    scraped_row = dict(scraped_row)  # copy — never mutate original
+                    scraped_row = dict(scraped_row)
                     scraped_title = scraped_row.get("Model Name", "")
                     if scraped_title != correct_title:
                         logging.info(
@@ -642,7 +781,6 @@ async def flipkart_step(state):
                     logging.info(f"[flipkart_agent] product='{original_title}' source=scraped")
 
                 else:
-                    # ── Fallback: minimal detail → format_products ────────────
                     logging.warning(
                         f"[flipkart_agent] no scraped data for title='{original_title}', "
                         f"using enhanced fallback row"
@@ -670,11 +808,29 @@ async def flipkart_step(state):
                     entry["source"] = "fallback"
                     logging.info(f"[flipkart_agent] product='{original_title}' source=fallback")
 
+            # ── SKU Master overlay + defaults (applied to ALL entries) ────────
+            flipkart_row = entry.get("flipkart_row", {})
+            original_title = entry["title"]
+
+            sku_row = find_sku_master_entry(original_title, sku_master_records)
+            if sku_row is not None:
+                flipkart_row = apply_sku_master_fields(flipkart_row, sku_row)
+                logging.info(
+                    f"[flipkart_agent] SKU Master fields applied for '{original_title}'"
+                )
+            else:
+                flipkart_row = apply_flipkart_defaults(flipkart_row)
+                logging.info(
+                    f"[flipkart_agent] No SKU Master match for '{original_title}' "
+                    f"— defaults applied only"
+                )
+
+            entry["flipkart_row"] = flipkart_row
+
         # ── Step 3: Write Excel output ────────────────────────────────────────
         logging.info(f"[flipkart_agent] total product_entries={len(product_entries)}")
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-
         output_file = os.path.join(
             UPDATED_DIR,
             f"{filename_no_ext}_flipkart_{timestamp}.xlsx"
@@ -700,8 +856,8 @@ async def flipkart_step(state):
 
                 product = {
                     'marketplace': 'flipkart',
-                    'marketplace_product_id': flipkart_row.get('Seller SKU ID') or flipkart_row.get('Seller SKU ID') or '',
-                    'sku': flipkart_row.get('Seller SKU ID') or flipkart_row.get('Seller SKU ID') or '',
+                    'marketplace_product_id': flipkart_row.get('Seller SKU ID') or '',
+                    'sku': flipkart_row.get('Seller SKU ID') or '',
                     'title': flipkart_row.get('Model Name') or flipkart_row.get('Title'),
                     'product_name': flipkart_row.get('Model Name') or flipkart_row.get('Title'),
                     'description': flipkart_row.get('Description'),
